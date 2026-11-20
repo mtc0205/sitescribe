@@ -1,0 +1,30 @@
+{
+  "name": "sitescribe",
+  "version": "0.1.0",
+  "description": "Offline-first AI field inspection companion — on-device Gemini Nano in signal-dead zones, cloud Gemini for heavy lifting. Built on Firebase AI Logic hybrid inference.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "check": "tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "firebase",
+    "ai-logic",
+    "hybrid-inference",
+    "gemini-nano",
+    "civil-inspection",
+    "offline-first"
+  ],
+  "author": "mtc0205",
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "firebase": "^13.4.0"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.18.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  }
+}

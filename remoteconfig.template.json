@@ -1,0 +1,19 @@
+{
+  "parameters": [
+    {
+      "key": "cloud_model",
+      "valueDefaults": { "value": "gemini-2.5-flash" },
+      "description": "Cloud fallback/report model id used by Firebase AI Logic."
+    },
+    {
+      "key": "feature_report_drafting",
+      "valueDefaults": { "value": true },
+      "description": "Kill-switch for the cloud report drafting feature."
+    },
+    {
+      "key": "feature_severity_check",
+      "valueDefaults": { "value": true },
+      "description": "Kill-switch for the on-device severity cross-check feature."
+    }
+  ]
+}
