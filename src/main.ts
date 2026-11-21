@@ -3,7 +3,7 @@
  * Every AI output renders next to an EngineBadge driven by real SDK telemetry.
  */
 import { initFirebase, runtime } from "./firebase";
-import { structureNote, askFieldQuestion, draftReport, crossCheckSeverity, warmDeviceModel, onEngineUpdate, deviceApiAvailable } from "./ai";
+import { structureNote, askFieldQuestion, draftReport, crossCheckSeverity, warmDeviceModel, onEngineUpdate, deviceApiAvailable, initEngineSimulationFromUrl, engineSimulation, getEngineLog } from "./ai";
 import { store, seedIfEmpty } from "./store";
 import type { AiAnswer, DefectRecord, EngineBadgeInfo, Project } from "./types";
 
@@ -58,9 +58,65 @@ function renderHome(): void {
         <div class="panel-head"><h2>Projects</h2><button id="new-project">＋ New</button></div>
         <div id="project-list" class="list"></div>
       </section>
+      <section class="panel" id="engine-panel">
+        <div class="panel-head"><h2>Engine &amp; routing</h2><span class="hint">honest telemetry · never faked</span></div>
+        <div id="engine-facts" class="engine-facts"><span class="muted">probing…</span></div>
+        <div class="badge-gallery">
+          <div class="badge-cell"><span class="chip device">⚡ On-device · Gemini Nano</span><span class="badge-note" id="note-device">Chrome built-in model</span></div>
+          <div class="badge-cell"><span class="chip cloud">☁ Cloud · Gemini</span><span class="badge-note" id="note-cloud">cloud task / routing</span></div>
+          <div class="badge-cell"><span class="chip fallback">↘ Fell back to cloud</span><span class="badge-note" id="note-fallback">device model unavailable</span></div>
+          <div class="badge-cell"><span class="chip unavailable">⊘ Rule-based</span><span class="badge-note" id="note-unavailable">no engine reachable (offline)</span></div>
+        </div>
+        <div class="sim-row">
+          <span class="muted">Cloud-state simulation (UI demo only, always labelled):</span>
+          <a href="?engine=off">off</a> · <a href="?engine=sim_cloud">cloud</a> · <a href="?engine=sim_fallback">fallback</a>
+        </div>
+        <details class="engine-log">
+          <summary>Engine log (<span id="log-count">0</span>)</summary>
+          <div id="engine-log-list"></div>
+        </details>
+      </section>
     </main>`;
   void refreshProjects();
+  void refreshEnginePanel();
   document.querySelector("#new-project")!.addEventListener("click", onNewProject);
+}
+
+/** Fill the Engine & routing panel with live facts (never invented). */
+async function refreshEnginePanel(): Promise<void> {
+  const facts = document.querySelector("#engine-facts");
+  if (!facts) return;
+  const sim = engineSimulation();
+  const parts: string[] = [];
+  parts.push(`runtime: <strong>${runtime.mode === "live" ? (runtime.emulator ? "emulator" : "firebase live") : "local demo"}</strong>`);
+  if ("LanguageModel" in self) {
+    parts.push(`Prompt API: <strong>exposed</strong>`);
+    try {
+      const av = await (self as unknown as { LanguageModel: { availability(): Promise<string> } }).LanguageModel.availability();
+      parts.push(`on-device model: <strong>${escapeHtml(av)}</strong>`);
+      const nd = document.querySelector("#note-device");
+      if (nd) nd.textContent = av === "available" ? "READY — will serve F1/F2/F4" : av === "downloadable" ? "downloadable (first capture warms it)" : `${av} on this machine`;
+    } catch (e) {
+      parts.push(`on-device model: <strong>probe failed</strong>`);
+    }
+  } else {
+    parts.push(`Prompt API: <strong>not exposed</strong> (badge reports cloud/fallback honestly)`);
+  }
+  if (sim !== "off") parts.push(`<span class="chip fallback">simulation: ${sim} · labels say “(simulated)”</span>`);
+  else parts.push(`simulation: off`);
+  facts.innerHTML = parts.map((p) => `<span class="fact">${p}</span>`).join(" ");
+  refreshEngineLog();
+}
+
+function refreshEngineLog(): void {
+  const list = document.querySelector("#engine-log-list");
+  const count = document.querySelector("#log-count");
+  if (!list) return;
+  const entries = getEngineLog();
+  if (count) count.textContent = String(entries.length);
+  list.innerHTML = entries.length
+    ? entries.map((e) => `<div class="log-row"><span class="muted">${escapeHtml(e.ts.slice(11, 19))}</span> <code>${escapeHtml(e.feature)}</code> ${badgeHtml(e.badge)}</div>`).join("")
+    : `<div class="empty">No engine events yet — capture a defect or ask a question.</div>`;
 }
 
 async function refreshProjects(): Promise<void> {
@@ -311,6 +367,7 @@ onEngineUpdate((badge) => {
     chip.className = `chip ${badge.engine === "on_device" ? "device" : badge.engine === "in_cloud" ? (badge.fellBack ? "fallback" : "cloud") : "pending"}`;
     chip.textContent = badge.label;
   }
+  refreshEngineLog();
 });
 
 window.addEventListener("online", render);
@@ -323,6 +380,7 @@ function escapeHtml(s: string): string {
 /* ---------- boot ---------- */
 
 (async () => {
+  initEngineSimulationFromUrl();
   await initFirebase();
   await seedIfEmpty();
   render();

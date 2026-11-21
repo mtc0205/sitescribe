@@ -155,3 +155,15 @@ button.ghost:hover { border-color: var(--accent); }
   .status { font-size: 0.7rem; }
   .hero h1 { font-size: 1.2rem; }
 }
+
+/* ---- engine & routing panel (SPEC §4 Settings) ---- */
+.engine-facts { display: flex; flex-wrap: wrap; gap: 0.6rem 1.2rem; margin-bottom: 0.9rem; font-size: 0.88rem; }
+.engine-facts .fact { white-space: nowrap; }
+.badge-gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.7rem; margin-bottom: 0.9rem; }
+.badge-cell { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.6rem 0.7rem; border: 1px solid color-mix(in srgb, var(--muted) 25%, transparent); border-radius: 10px; }
+.badge-note { font-size: 0.78rem; color: var(--muted); }
+.sim-row { font-size: 0.85rem; margin-bottom: 0.6rem; }
+.sim-row a { color: var(--cloud); }
+.engine-log summary { cursor: pointer; font-size: 0.88rem; color: var(--muted); }
+.engine-log .log-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.25rem 0; font-size: 0.82rem; border-bottom: 1px dashed color-mix(in srgb, var(--muted) 20%, transparent); }
+.engine-log code { background: color-mix(in srgb, var(--muted) 15%, transparent); padding: 0 0.35rem; border-radius: 4px; font-size: 0.78rem; }

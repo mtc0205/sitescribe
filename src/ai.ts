@@ -55,8 +55,82 @@ export function onEngineUpdate(fn: EngineListener): () => void {
   engineListeners.add(fn);
   return () => engineListeners.delete(fn);
 }
-function emitEngine(badge: EngineBadgeInfo) {
+
+/** Rolling log of engine events (SPEC §4: Settings → engine badge log). */
+export interface EngineLogEntry {
+  ts: string;
+  feature: string;
+  badge: EngineBadgeInfo;
+}
+const engineLog: EngineLogEntry[] = [];
+export function getEngineLog(): readonly EngineLogEntry[] {
+  return engineLog;
+}
+function emitEngine(badge: EngineBadgeInfo, feature = "system") {
+  engineLog.unshift({ ts: new Date().toISOString(), feature, badge });
+  if (engineLog.length > 50) engineLog.length = 50;
   engineListeners.forEach((fn) => fn(badge));
+}
+
+/* ---------- engine simulation (demo mode only, always labelled) ----------
+ *
+ * The cloud backend only exists after the Firebase project is wired up
+ * (post-hackathon-night). To let the UI demonstrate all four badge states
+ * BEFORE that, `?engine=sim_cloud|sim_fallback` short-circuits `ask()` in
+ * demo mode with a clearly labelled SIMULATED badge. Real runs never touch
+ * this path: simulation requires BOTH demo mode AND the explicit URL flag,
+ * and every simulated badge carries "(simulated)" in its label.
+ */
+
+export type SimulationKind = "off" | "cloud" | "fallback";
+
+let simulation: SimulationKind = "off";
+
+export function setEngineSimulation(kind: SimulationKind): void {
+  simulation = kind;
+}
+export function engineSimulation(): SimulationKind {
+  return simulation;
+}
+
+/** Read `?engine=` from the URL (called once at boot). */
+export function initEngineSimulationFromUrl(): SimulationKind {
+  try {
+    const v = new URLSearchParams(location.search).get("engine");
+    if (v === "sim_cloud" || v === "sim_fallback") simulation = v === "sim_cloud" ? "cloud" : "fallback";
+    else simulation = "off";
+  } catch {
+    simulation = "off";
+  }
+  return simulation;
+}
+
+function isSimulated(): boolean {
+  return (
+    simulation !== "off" &&
+    (globalThis as { __ssRuntimeMode?: string }).__ssRuntimeMode === "demo"
+  );
+}
+
+function simulatedAnswer(feature: string, prompt: string): AiAnswer {
+  const wantsJson = prompt.includes("structured defect record");
+  let text: string;
+  if (wantsJson) {
+    // Synthesise the record with the transparent rule-based extractor so the
+    // demoed output stays plausible; the badge says the engine was simulated.
+    const note = prompt.split("Engineer's note:").pop() ?? "";
+    text = JSON.stringify(ruleBasedStructure(note.trim()));
+  } else if (prompt.includes("inspection report")) {
+    text = "## Simulated report draft\n\n(simulated cloud output — the real Gemini backend is wired at Firebase project creation)";
+  } else {
+    text = "(simulated cloud answer — demonstrated for the engine-badge UI state only)";
+  }
+  const badge: EngineBadgeInfo =
+    simulation === "cloud"
+      ? { engine: "in_cloud", fellBack: false, label: "Cloud · Gemini (simulated)" }
+      : { engine: "in_cloud", fellBack: true, label: "Fell back to cloud · Gemini (simulated)" };
+  emitEngine(badge, feature);
+  return { text, badge };
 }
 
 let aiService: AI | null = null;
@@ -129,7 +203,9 @@ async function ask(
   prompt: string,
   options: { responseMimeType?: string; responseSchema?: object; temperature?: number } = {},
   requestedOnDevice = true,
+  feature = "ai",
 ): Promise<AiAnswer> {
+  if (isSimulated()) return simulatedAnswer(feature, prompt);
   const model = requireModel(mode);
   const request: GenerateContentRequest = {
     contents: [{ role: "user", parts: [{ type: "text", text: prompt }] }],
@@ -147,7 +223,7 @@ async function ask(
   const badge: EngineBadgeInfo = source
     ? badgeFor(source, requestedOnDevice && source === "in_cloud")
     : { engine: "pending", label: "Engine unknown" };
-  emitEngine(badge);
+  emitEngine(badge, feature);
   return { text: result.response.text(), badge };
 }
 
@@ -163,6 +239,8 @@ export async function structureNote(note: string): Promise<{ record: DefectJson;
         InferenceMode.PREFER_ON_DEVICE,
         `${STRUCTURE_PROMPT}\n\nEngineer's note:\n${note}`,
         { responseMimeType: "application/json", responseSchema: DEFECT_SCHEMA, temperature: 0.1 },
+        true,
+        "F1 structure",
       ),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`AI call timed out (${Math.round(budgetMs / 1000)}s)`)), budgetMs)),
     ]);
@@ -179,7 +257,7 @@ export async function structureNote(note: string): Promise<{ record: DefectJson;
     // transparent rules — the badge says so; we never pretend AI ran.
     console.warn("[ai] structuring failed, using rule-based fallback:", e);
     const badge: EngineBadgeInfo = { engine: "unavailable", label: "Rule-based (no AI engine available)" };
-    emitEngine(badge);
+    emitEngine(badge, "F1 structure");
     return { record: ruleBasedStructure(note), answer: { text: "", badge } };
   }
 }
@@ -231,20 +309,20 @@ function repairJson(text: string): DefectJson {
 
 /** F2 — on-site single-turn Q&A. On-device first. */
 export function askFieldQuestion(question: string): Promise<AiAnswer> {
-  return ask(InferenceMode.PREFER_ON_DEVICE, `${QA_PROMPT}\n\nQuestion: ${question}`, { temperature: 0.3 });
+  return ask(InferenceMode.PREFER_ON_DEVICE, `${QA_PROMPT}\n\nQuestion: ${question}`, { temperature: 0.3 }, true, "F2 field QA");
 }
 
 /** F3 — report drafting. Cloud only by design (long aggregation, see SPEC §5). */
 export async function draftReport(records: DefectJson[]): Promise<AiAnswer> {
   if (!navigator.onLine) {
     const badge: EngineBadgeInfo = { engine: "unavailable", label: "Report drafting needs a connection (cloud task)" };
-    emitEngine(badge);
+    emitEngine(badge, "F3 report");
     return { text: "", badge };
   }
   const recordsText = records
     .map((r, i) => `${i + 1}. [${r.severity}] ${r.defectType} — ${r.component} (${r.quantity})${r.notes ? `; ${r.notes}` : ""}`)
     .join("\n");
-  return ask(InferenceMode.ONLY_IN_CLOUD, `${REPORT_PROMPT}\n\nRecords:\n${recordsText}`, { temperature: 0.4 }, false);
+  return ask(InferenceMode.ONLY_IN_CLOUD, `${REPORT_PROMPT}\n\nRecords:\n${recordsText}`, { temperature: 0.4 }, false, "F3 report");
 }
 
 /** F4 — severity cross-check against a maintenance-standard reference card. On-device. */
@@ -255,5 +333,5 @@ export async function crossCheckSeverity(record: DefectJson): Promise<AiAnswer> 
     "Reference (seepage/efflorescence): isolated efflorescence minor; active seepage with deposits moderate; structural saturation severe.",
   ].join("\n");
   const q = `Given the record below and the reference card, answer in 3 sentences: does the recorded severity match the reference? If measurements are missing, say what to measure next.\n\nRecord: ${JSON.stringify(record)}\n\n${card}`;
-  return ask(InferenceMode.PREFER_ON_DEVICE, q, { temperature: 0.2 });
+  return ask(InferenceMode.PREFER_ON_DEVICE, q, { temperature: 0.2 }, true, "F4 severity check");
 }
