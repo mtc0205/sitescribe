@@ -180,6 +180,9 @@ async function onCapture(): Promise<void> {
       severity: (["unknown", "minor", "moderate", "severe"].includes(record.severity) ? record.severity : "unknown") as DefectRecord["severity"],
     }, note, false, true));
     // Save it (pending sync when offline — the honest state).
+    const engineOf: DefectRecord["extractedBy"] =
+      answer.badge.engine === "on_device" ? "on_device" :
+      answer.badge.engine === "in_cloud" ? "in_cloud" : "rule_based";
     const saved = await store.addRecord({
       projectId: activeProject!.id,
       createdAt: new Date().toISOString(),
@@ -189,7 +192,7 @@ async function onCapture(): Promise<void> {
       quantity: record.quantity || "(unspecified)",
       severity: (["unknown", "minor", "moderate", "severe"].includes(record.severity) ? record.severity : "unknown") as DefectRecord["severity"],
       notes: record.notes,
-      extractedBy: answer.badge.engine === "on_device" ? "on_device" : "in_cloud",
+      extractedBy: engineOf,
       syncState: navigator.onLine ? "synced" : "pending",
     });
     noteEl.value = "";
@@ -222,7 +225,7 @@ function recordCardHtml(r: RecordCardData, _rawNote: string, showSync = true, wi
         <span class="muted">${escapeHtml(r.component)}</span>
         ${showSync ? (r.syncState === "pending" ? `<span class="chip pending">⏳ pending sync</span>` : `<span class="chip online">✓ synced</span>`) : ""}
       </div>
-      <div class="record-meta">${escapeHtml(r.quantity)} · severity: ${sev}${r.extractedBy === "on_device" ? ` · <span class="chip device">⚡ on-device</span>` : ` · <span class="chip cloud">☁ cloud</span>`}</div>
+      <div class="record-meta">${escapeHtml(r.quantity)} · severity: ${sev}${r.extractedBy === "on_device" ? ` · <span class="chip device">⚡ on-device</span>` : r.extractedBy === "rule_based" ? ` · <span class="chip unavailable">⚙ rule-based</span>` : ` · <span class="chip cloud">☁ cloud</span>`}</div>
       ${r.notes ? `<div class="record-notes">${escapeHtml(r.notes)}</div>` : ""}
       ${withActions ? `<div class="row"><button class="ghost check-btn">Check severity vs reference</button><span class="check-out"></span></div>` : ""}
     </div>`;

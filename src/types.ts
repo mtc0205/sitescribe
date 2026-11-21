@@ -29,7 +29,7 @@ export interface DefectRecord {
   severity: "unknown" | "minor" | "moderate" | "severe";
   notes: string;
   /** Which engine produced the extraction. */
-  extractedBy: EngineKind;
+  extractedBy: EngineKind | "rule_based";
   /** Pending cloud sync when captured offline (demo/local mode always true until "synced"). */
   syncState: "pending" | "synced";
 }

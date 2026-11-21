@@ -86,6 +86,18 @@ function badgeFor(engine: "on_device" | "in_cloud", fellBack: boolean): EngineBa
     : { engine, fellBack, label: "Cloud · Gemini" };
 }
 
+/** In demo mode there is no real cloud backend: fail fast so the honest
+ *  rule-based fallback kicks in within seconds instead of hanging a minute. */
+function aiBudgetMs(): number {
+  try {
+    // Imported lazily to avoid a cycle; demo = placeholder config.
+    const mode = (globalThis as { __ssRuntimeMode?: string }).__ssRuntimeMode;
+    return mode === "demo" ? 12_000 : 45_000;
+  } catch {
+    return 45_000;
+  }
+}
+
 /**
  * Warm up / download the on-device model. MUST be invoked from a user gesture
  * (Chrome's Prompt API user-activation requirement); the UI calls this inside
@@ -140,19 +152,64 @@ async function ask(
 }
 
 /** F1 — free-text field note → structured defect record (JSON). On-device first. */
-export async function structureNote(note: string): Promise<{ record: Omit<DefectJson, never>; answer: AiAnswer }> {
-  const answer = await ask(
-    InferenceMode.PREFER_ON_DEVICE,
-    `${STRUCTURE_PROMPT}\n\nEngineer's note:\n${note}`,
-    { responseMimeType: "application/json", responseSchema: DEFECT_SCHEMA, temperature: 0.1 },
-  );
-  let parsed: DefectJson;
+export async function structureNote(note: string): Promise<{ record: DefectJson; answer: AiAnswer }> {
   try {
-    parsed = repairJson(answer.text);
-  } catch {
-    parsed = { component: "", defectType: "", quantity: "", severity: "unknown", notes: note };
+    // Race the AI call against a timeout so an unreachable cloud doesn't hang
+    // the capture flow in the field (worst case: fall through to rules).
+    // Demo mode (placeholder config) has no real cloud: fail fast to rules.
+    const budgetMs = aiBudgetMs();
+    const answer = await Promise.race([
+      ask(
+        InferenceMode.PREFER_ON_DEVICE,
+        `${STRUCTURE_PROMPT}\n\nEngineer's note:\n${note}`,
+        { responseMimeType: "application/json", responseSchema: DEFECT_SCHEMA, temperature: 0.1 },
+      ),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`AI call timed out (${Math.round(budgetMs / 1000)}s)`)), budgetMs)),
+    ]);
+    let parsed: DefectJson;
+    try {
+      parsed = repairJson(answer.text);
+    } catch {
+      parsed = { component: "", defectType: "", quantity: "", severity: "unknown", notes: note };
+    }
+    return { record: parsed, answer };
+  } catch (e) {
+    // Honest degradation: no on-device model AND no cloud reachability
+    // (e.g. offline demo without a Firebase project). Structure the note with
+    // transparent rules — the badge says so; we never pretend AI ran.
+    console.warn("[ai] structuring failed, using rule-based fallback:", e);
+    const badge: EngineBadgeInfo = { engine: "unavailable", label: "Rule-based (no AI engine available)" };
+    emitEngine(badge);
+    return { record: ruleBasedStructure(note), answer: { text: "", badge } };
   }
-  return { record: parsed, answer };
+}
+
+/**
+ * Deterministic keyword extraction so the capture loop still works in a
+ * signal-dead browser with no model downloaded. Clearly labelled in the UI.
+ */
+function ruleBasedStructure(note: string): DefectJson {
+  const n = note.toLowerCase();
+  const defectVocab: [RegExp, string][] = [
+    [/efflorescence|white deposit/, "efflorescence"],
+    [/seepage|leak|water stain|damp/, "seepage"],
+    [/spall|spalling|concrete break/, "spalling"],
+    [/delamination|hollow sound/, "delamination"],
+    [/corrosion|rust|reinforc\w* expos/, "corrosion / exposed reinforcement"],
+    [/crack.*longitudinal|longitudinal.*crack/, "longitudinal crack"],
+    [/crack.*transverse|transverse.*crack/, "transverse crack"],
+    [/crack/, "crack"],
+    [/deflection|sag/, "excessive deflection"],
+    [/settlement/, "settlement"],
+  ];
+  const defectType = defectVocab.find(([re]) => re.test(n))?.[1] ?? "unclassified observation";
+  const qty = (note.match(/~?\d+(\.\d+)?\s*(mm|cm|m|sq\.?m|m2)\b/gi) ?? []).join(", ") || "not stated";
+  const comp = (note.match(/(?:on|near|at|of)\s+(?:the\s+)?(?:web of\s+)?(girder \w+|deck slab\w*|pier \w+|abutment\w*|bearing\w*|girder \w+|slab\w*|wall\w*|segment \w+)/i) ?? [])[1] ?? "unspecified component";
+  let severity: DefectJson["severity"] = "unknown";
+  if (/expos\w* (rebar|reinforcement)|severe|large/.test(n)) severity = "severe";
+  else if (/\d+(\.\d+)?\s*mm/.test(n) && parseFloat((n.match(/(\d+(\.\d+)?)\s*mm/) ?? ["0"])[0]) > 0.5) severity = "moderate";
+  else if (/hairline|minor|small/.test(n)) severity = "minor";
+  return { component: comp, defectType, quantity: qty, severity, notes: note.slice(0, 200) };
 }
 
 type DefectJson = {

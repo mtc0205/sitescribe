@@ -46,13 +46,16 @@ function parseConfig(): Record<string, string> | null {
 export async function initFirebase(): Promise<RuntimeMode> {
   const cfg = parseConfig();
   if (!cfg) {
-    // Demo mode — AI service is still created against a synthetic app so the
-    // on-device path can be exercised; cloud calls will simply fail over
-    // network/auth which the engine badge reports honestly.
-    const syntheticApp = { options: { apiKey: "demo", projectId: "sitescribe-demo", appId: "demo", authDomain: "demo", messagingSenderId: "demo", storageBucket: "demo" } } as unknown as FirebaseApp;
-    const ai = getAI(syntheticApp, { backend: new GoogleAIBackend() });
-    initAI(ai);
+    // Demo mode — a real (placeholder-config) Firebase app so the AI Logic
+    // SDK initializes locally. Cloud calls fail honestly (no real project);
+    // the on-device path works if Chrome's Prompt API has the model.
+    const demoCfg = { apiKey: "demo-api-key", authDomain: "sitescribe-demo.firebaseapp.com", projectId: "sitescribe-demo", appId: "1:000000000000:web:demo0000000000000000", storageBucket: "sitescribe-demo.appspot.com", messagingSenderId: "000000000000" };
+    const app = initializeApp(demoCfg, "sitescribe-demo");
+    runtime.app = app;
     runtime.mode = "demo";
+    (globalThis as { __ssRuntimeMode?: string }).__ssRuntimeMode = "demo";
+    const ai = getAI(app, { backend: new GoogleAIBackend() });
+    initAI(ai);
     return runtime;
   }
 
