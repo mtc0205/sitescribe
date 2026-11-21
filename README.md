@@ -35,6 +35,17 @@ Open the printed URL in **Chrome 139+**, enable `chrome://flags/#prompt-api-for-
 
 Offline demo: DevTools → Network → **Offline**, then capture a record; the badge stays green ⚡ and the record is marked *pending sync*.
 
+The home screen's **Engine & routing** panel shows live telemetry (runtime mode, Prompt API exposure, model availability), the four badge states, and a rolling engine log. If no engine is reachable at all (offline demo, no model), capture degrades to a clearly-labelled **⚙ rule-based** structurer — the loop never dies and nothing is faked.
+
+For UI demonstrations of the cloud badge states before a Firebase project is wired up, append `?engine=sim_cloud` or `?engine=sim_fallback` — demo-mode-only, every badge carries "(simulated)". Real runs never touch this path.
+
+## Tests & e2e
+
+```bash
+npm test          # unit tests: rule-based extraction, conflict merge, pending queue
+node scripts/e2e-full.mjs   # full offline→sync walkthrough (Chrome, asserts all four features)
+```
+
 ## Run with Firebase
 
 1. Create a Firebase project; add a Web app; copy the config.

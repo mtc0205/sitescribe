@@ -38,7 +38,7 @@ const typed = await page.evaluate(async () => {
   const target = input.tagName === "INPUT" ? input : (input.shadowRoot?.querySelector("input") ?? input);
   target.focus();
   // Chrome's flags search listens on input events
-  target.value = "on device";
+  target.value = "prerelease";
   target.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
   return "typed";
 });
@@ -60,6 +60,6 @@ const dump = await page.evaluate(() => {
   return rows;
 });
 console.log("[matches]\n" + dump.join("\n---\n"));
-await page.screenshot({ path: "C:\\Users\\user\\Downloads\\盒盒\\contests\\2026-11-20-firebase-buildhybridai\\tools\\nano-flags-search.png" });
+await page.screenshot({ path: "C:\\Users\\user\\Downloads\\盒盒\\contests\\2026-11-20-firebase-buildhybridai\\tools\\nano-flags-prerelease.png" });
 
 await browser.close();
