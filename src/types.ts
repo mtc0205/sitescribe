@@ -21,6 +21,8 @@ export interface DefectRecord {
   projectId: string;
   /** ISO timestamp captured in the field. */
   createdAt: string;
+  /** ISO timestamp of the last local edit, if any (conflict-merge input). */
+  updatedAt?: string;
   /** The raw engineer note the record was extracted from. */
   rawNote: string;
   component: string;

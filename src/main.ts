@@ -294,7 +294,7 @@ async function refreshRecords(): Promise<void> {
   if (!list) return;
   document.querySelector("#record-count")!.textContent = `(${records.length})`;
   list.innerHTML = records.length
-    ? records.map((r) => recordCardHtml(r, r.rawNote)).join("")
+    ? records.map((r) => recordCardHtml(r, r.rawNote, true, true)).join("")
     : `<div class="empty">No records yet. Capture your first defect above — try it with DevTools offline.</div>`;
 
   // Wire severity cross-check buttons (F4, on-device).

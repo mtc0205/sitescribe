@@ -6,6 +6,9 @@
  * built from `GenerateContentResponse.inferenceSource`.
  */
 import type { AiAnswer, EngineBadgeInfo } from "./types";
+import { ruleBasedStructure, ruleBasedCrossCheck, repairJson, type DefectJson } from "./extract";
+
+export type { DefectJson };
 
 // Re-exported so the rest of the app never imports `firebase/ai` directly.
 import {
@@ -262,54 +265,22 @@ export async function structureNote(note: string): Promise<{ record: DefectJson;
   }
 }
 
-/**
- * Deterministic keyword extraction so the capture loop still works in a
- * signal-dead browser with no model downloaded. Clearly labelled in the UI.
- */
-function ruleBasedStructure(note: string): DefectJson {
-  const n = note.toLowerCase();
-  const defectVocab: [RegExp, string][] = [
-    [/efflorescence|white deposit/, "efflorescence"],
-    [/seepage|leak|water stain|damp/, "seepage"],
-    [/spall|spalling|concrete break/, "spalling"],
-    [/delamination|hollow sound/, "delamination"],
-    [/corrosion|rust|reinforc\w* expos/, "corrosion / exposed reinforcement"],
-    [/crack.*longitudinal|longitudinal.*crack/, "longitudinal crack"],
-    [/crack.*transverse|transverse.*crack/, "transverse crack"],
-    [/crack/, "crack"],
-    [/deflection|sag/, "excessive deflection"],
-    [/settlement/, "settlement"],
-  ];
-  const defectType = defectVocab.find(([re]) => re.test(n))?.[1] ?? "unclassified observation";
-  const qty = (note.match(/~?\d+(\.\d+)?\s*(mm|cm|m|sq\.?m|m2)\b/gi) ?? []).join(", ") || "not stated";
-  const comp = (note.match(/(?:on|near|at|of)\s+(?:the\s+)?(?:web of\s+)?(girder \w+|deck slab\w*|pier \w+|abutment\w*|bearing\w*|girder \w+|slab\w*|wall\w*|segment \w+)/i) ?? [])[1] ?? "unspecified component";
-  let severity: DefectJson["severity"] = "unknown";
-  if (/expos\w* (rebar|reinforcement)|severe|large/.test(n)) severity = "severe";
-  else if (/\d+(\.\d+)?\s*mm/.test(n) && parseFloat((n.match(/(\d+(\.\d+)?)\s*mm/) ?? ["0"])[0]) > 0.5) severity = "moderate";
-  else if (/hairline|minor|small/.test(n)) severity = "minor";
-  return { component: comp, defectType, quantity: qty, severity, notes: note.slice(0, 200) };
-}
-
-type DefectJson = {
-  component: string;
-  defectType: string;
-  quantity: string;
-  severity: string;
-  notes: string;
-};
-
-/** Models occasionally wrap JSON in fences; extract the first {...} block. */
-function repairJson(text: string): DefectJson {
-  const cleaned = text.replace(/```json|```/g, "").trim();
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-  if (start === -1 || end === -1) throw new Error("no JSON object found");
-  return JSON.parse(cleaned.slice(start, end + 1));
-}
+;
 
 /** F2 — on-site single-turn Q&A. On-device first. */
-export function askFieldQuestion(question: string): Promise<AiAnswer> {
-  return ask(InferenceMode.PREFER_ON_DEVICE, `${QA_PROMPT}\n\nQuestion: ${question}`, { temperature: 0.3 }, true, "F2 field QA");
+export async function askFieldQuestion(question: string): Promise<AiAnswer> {
+  try {
+    return await ask(InferenceMode.PREFER_ON_DEVICE, `${QA_PROMPT}\n\nQuestion: ${question}`, { temperature: 0.3 }, true, "F2 field QA");
+  } catch (e) {
+    // Honest degradation: offline with no device model → say so, never fake.
+    console.warn("[ai] field QA failed:", e);
+    const badge: EngineBadgeInfo = { engine: "unavailable", label: "No engine reachable (offline, no device model)" };
+    emitEngine(badge, "F2 field QA");
+    return {
+      text: "Field Q&A needs either the on-device model or a connection — none was reachable. Defect capture still works: notes are structured by transparent rules and will sync later.",
+      badge,
+    };
+  }
 }
 
 /** F3 — report drafting. Cloud only by design (long aggregation, see SPEC §5). */
@@ -333,5 +304,12 @@ export async function crossCheckSeverity(record: DefectJson): Promise<AiAnswer> 
     "Reference (seepage/efflorescence): isolated efflorescence minor; active seepage with deposits moderate; structural saturation severe.",
   ].join("\n");
   const q = `Given the record below and the reference card, answer in 3 sentences: does the recorded severity match the reference? If measurements are missing, say what to measure next.\n\nRecord: ${JSON.stringify(record)}\n\n${card}`;
-  return ask(InferenceMode.PREFER_ON_DEVICE, q, { temperature: 0.2 }, true, "F4 severity check");
+  try {
+    return await ask(InferenceMode.PREFER_ON_DEVICE, q, { temperature: 0.2 }, true, "F4 severity check");
+  } catch (e) {
+    console.warn("[ai] severity check failed:", e);
+    const badge: EngineBadgeInfo = { engine: "unavailable", label: "Rule-based (no AI engine available)" };
+    emitEngine(badge, "F4 severity check");
+    return { text: ruleBasedCrossCheck(record), badge };
+  }
 }

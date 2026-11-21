@@ -8,6 +8,7 @@
  */
 import type { DefectRecord, Project } from "./types";
 import { runtime } from "./firebase";
+import { flushPending } from "./merge";
 
 const LS_KEY = "sitescribe.v1";
 
@@ -104,15 +105,10 @@ export const store = {
   /** Demo-mode "back in range" simulation: flip pending records to synced. */
   async syncPending(projectId: string): Promise<number> {
     const db = readLocal();
-    let n = 0;
-    for (const r of db.records) {
-      if (r.projectId === projectId && r.syncState === "pending") {
-        r.syncState = "synced";
-        n++;
-      }
-    }
+    const { flipped, count } = flushPending(db.records, projectId);
+    db.records = flipped;
     writeLocal(db);
-    return n;
+    return count;
   },
 };
 
