@@ -1,0 +1,14 @@
+{
+  "name": "SiteScribe — Offline-first AI inspection companion",
+  "short_name": "SiteScribe",
+  "description": "Capture structured defect records inside signal-dead structures — on-device Gemini Nano when offline, cloud Gemini for heavy lifting.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#10141a",
+  "theme_color": "#10141a",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

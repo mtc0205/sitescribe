@@ -144,26 +144,59 @@ button.ghost:hover { border-color: var(--accent); }
 .card {
   text-align: left; padding: 0.75rem 0.9rem;
   background: var(--bg-card); border: 1px solid var(--line); border-radius: 10px;
+  display: block; width: 100%;
+  transition: border-color 0.15s, transform 0.15s;
 }
-.card:hover { border-color: var(--accent); }
-.card-title { font-weight: 600; }
-.card-sub { color: var(--muted); font-size: 0.82rem; text-transform: capitalize; }
+.card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.card:active { transform: translateY(0); }
+.card-title { font-weight: 600; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.card-go { color: var(--accent); font-weight: 700; transition: transform 0.15s; }
+.card:hover .card-go { transform: translateX(3px); }
+.card-sub { color: var(--muted); font-size: 0.82rem; margin-top: 0.15rem; }
 
 .session-title { font-size: 1.15rem; margin: 0.25rem 0 0; }
+
+.hero-cta { margin: 0.4rem 0 0.6rem; }
+
+.site-footer {
+  display: flex; flex-direction: column; gap: 0.15rem; align-items: center;
+  color: var(--muted); font-size: 0.78rem; padding: 1.2rem 0 0.5rem; text-align: center;
+}
 
 @media (max-width: 480px) {
   .status { font-size: 0.7rem; }
   .hero h1 { font-size: 1.2rem; }
+  main { padding: 0.75rem; }
+  .panel { padding: 0.75rem; }
+}
+
+/* report export */
+.report-actions { margin-top: 0.5rem; }
+@media print {
+  body { background: #fff; color: #000; }
+  body * { visibility: hidden; }
+  #report-out, #report-out * { visibility: visible; }
+  #report-out { position: absolute; inset: 0; padding: 1rem; }
+  .report { color: #000; font-family: Georgia, serif; font-size: 12pt; white-space: pre-wrap; }
 }
 
 /* ---- engine & routing panel (SPEC §4 Settings) ---- */
-.engine-facts { display: flex; flex-wrap: wrap; gap: 0.6rem 1.2rem; margin-bottom: 0.9rem; font-size: 0.88rem; }
-.engine-facts .fact { white-space: nowrap; }
-.badge-gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.7rem; margin-bottom: 0.9rem; }
-.badge-cell { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.6rem 0.7rem; border: 1px solid color-mix(in srgb, var(--muted) 25%, transparent); border-radius: 10px; }
-.badge-note { font-size: 0.78rem; color: var(--muted); }
-.sim-row { font-size: 0.85rem; margin-bottom: 0.6rem; }
-.sim-row a { color: var(--cloud); }
-.engine-log summary { cursor: pointer; font-size: 0.88rem; color: var(--muted); }
+.engine-facts { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-bottom: 0.9rem; font-size: 0.84rem; }
+.engine-facts .fact {
+  white-space: nowrap; padding: 0.18rem 0.6rem; border-radius: 999px;
+  background: var(--bg-card); border: 1px solid color-mix(in srgb, var(--muted) 25%, transparent);
+}
+.badge-gallery { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.7rem; margin-bottom: 0.9rem; }
+@media (max-width: 480px) { .badge-gallery { grid-template-columns: 1fr; } }
+.badge-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 0.4rem; padding: 0.6rem 0.7rem; border: 1px solid color-mix(in srgb, var(--muted) 25%, transparent); border-radius: 10px; }
+.badge-note { font-size: 0.78rem; color: var(--muted); min-height: 1rem; }
+.sim-row { font-size: 0.85rem; margin-bottom: 0.6rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.sim-btn {
+  color: var(--cloud); text-decoration: none; font-weight: 600;
+  padding: 0.3rem 0.8rem; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--cloud) 35%, transparent);
+}
+.sim-btn:hover { background: color-mix(in srgb, var(--cloud) 12%, transparent); }
+.engine-log summary { cursor: pointer; font-size: 0.88rem; color: var(--muted); padding: 0.3rem 0; }
 .engine-log .log-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.25rem 0; font-size: 0.82rem; border-bottom: 1px dashed color-mix(in srgb, var(--muted) 20%, transparent); }
 .engine-log code { background: color-mix(in srgb, var(--muted) 15%, transparent); padding: 0 0.35rem; border-radius: 4px; font-size: 0.78rem; }

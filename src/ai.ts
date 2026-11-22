@@ -164,12 +164,14 @@ function badgeFor(engine: "on_device" | "in_cloud", fellBack: boolean): EngineBa
 }
 
 /** In demo mode there is no real cloud backend: fail fast so the honest
- *  rule-based fallback kicks in within seconds instead of hanging a minute. */
+ *  rule-based fallback kicks in within seconds instead of hanging a minute.
+ *  Emulator mode has Auth/Firestore emulators but no AI Logic emulator, so
+ *  cloud calls fail there too — same fast budget. */
 function aiBudgetMs(): number {
   try {
     // Imported lazily to avoid a cycle; demo = placeholder config.
     const mode = (globalThis as { __ssRuntimeMode?: string }).__ssRuntimeMode;
-    return mode === "demo" ? 12_000 : 45_000;
+    return mode === "demo" || mode === "emulator" ? 12_000 : 45_000;
   } catch {
     return 45_000;
   }

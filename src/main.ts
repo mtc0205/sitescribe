@@ -4,8 +4,9 @@
  */
 import { initFirebase, runtime } from "./firebase";
 import { structureNote, askFieldQuestion, draftReport, crossCheckSeverity, warmDeviceModel, onEngineUpdate, deviceApiAvailable, initEngineSimulationFromUrl, engineSimulation, getEngineLog } from "./ai";
-import { store, seedIfEmpty } from "./store";
+import { store, seedIfEmpty, onStoreChange } from "./store";
 import type { AiAnswer, DefectRecord, EngineBadgeInfo, Project } from "./types";
+import "./styles.css";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
@@ -52,6 +53,7 @@ function renderHome(): void {
       <section class="hero">
         <h1>Field inspections in dead zones,<br/><em>still structured.</em></h1>
         <p>Dictate defects under the deck, inside the tunnel, up the valley. Gemini Nano runs <strong>on your device</strong> — no signal needed, nothing leaves it. Heavy report drafting happens in the cloud when you're back in range.</p>
+        <div class="hero-cta"><button id="cta-open" class="primary">Open today's inspection →</button></div>
         ${deviceApiAvailable() ? "" : `<p class="warn">This browser does not expose the Chrome on-device model API — engine badge will report cloud/fallback honestly.</p>`}
       </section>
       <section class="panel">
@@ -69,17 +71,27 @@ function renderHome(): void {
         </div>
         <div class="sim-row">
           <span class="muted">Cloud-state simulation (UI demo only, always labelled):</span>
-          <a href="?engine=off">off</a> · <a href="?engine=sim_cloud">cloud</a> · <a href="?engine=sim_fallback">fallback</a>
+          <a class="sim-btn" href="?engine=off">off</a>
+          <a class="sim-btn" href="?engine=sim_cloud">cloud</a>
+          <a class="sim-btn" href="?engine=sim_fallback">fallback</a>
         </div>
         <details class="engine-log">
           <summary>Engine log (<span id="log-count">0</span>)</summary>
           <div id="engine-log-list"></div>
         </details>
       </section>
+      <footer class="site-footer">
+        <span>SiteScribe · built for Firebase #BuildHybridAI 2026 · Apache-2.0</span>
+        <span class="muted">every engine badge is live SDK telemetry — never faked</span>
+      </footer>
     </main>`;
   void refreshProjects();
   void refreshEnginePanel();
   document.querySelector("#new-project")!.addEventListener("click", onNewProject);
+  document.querySelector("#cta-open")?.addEventListener("click", () => {
+    const first = document.querySelector<HTMLElement>("#project-list .card");
+    if (first) first.click();
+  });
 }
 
 /** Fill the Engine & routing panel with live facts (never invented). */
@@ -122,13 +134,16 @@ function refreshEngineLog(): void {
 async function refreshProjects(): Promise<void> {
   const projects = await store.listProjects();
   const list = document.querySelector("#project-list")!;
-  list.innerHTML = projects.length
-    ? projects.map((p) => `
+  if (!projects.length) {
+    list.innerHTML = `<div class="empty">No projects yet — tap <strong>＋ New</strong> to inspect your first structure.</div>`;
+    return;
+  }
+  const counts = await Promise.all(projects.map((p) => store.listRecords(p.id).then((r) => r.length)));
+  list.innerHTML = projects.map((p, i) => `
         <button class="card" data-id="${p.id}">
-          <div class="card-title">${escapeHtml(p.name)}</div>
-          <div class="card-sub">${structureLabel(p.structureType)}</div>
-        </button>`).join("")
-    : `<div class="empty">No projects yet — create one or reload to seed the demo.</div>`;
+          <div class="card-title">${escapeHtml(p.name)} <span class="card-go">→</span></div>
+          <div class="card-sub">${structureLabel(p.structureType)} · ${counts[i]} record${counts[i] === 1 ? "" : "s"} · since ${escapeHtml(p.createdAt.slice(0, 10))}</div>
+        </button>`).join("");
   list.querySelectorAll(".card").forEach((el) =>
     el.addEventListener("click", () => {
       activeProject = projects.find((p) => p.id === (el as HTMLElement).dataset.id) ?? null;
@@ -158,7 +173,7 @@ function renderSession(): void {
       <button id="back" class="ghost">← Projects</button>
       <div class="status">
         <span class="chip ${navigator.onLine ? "online" : "offline"}">${navigator.onLine ? "⇅ online" : "✕ offline"}</span>
-        <span id="engine-chip" class="chip pending">…</span>
+        <span id="engine-chip" class="chip pending">engine idle</span>
       </div>
     </header>
     <main>
@@ -267,12 +282,14 @@ interface RecordCardData {
   quantity: string;
   severity: DefectRecord["severity"];
   notes: string;
+  createdAt?: string;
   extractedBy?: DefectRecord["extractedBy"];
   syncState?: DefectRecord["syncState"];
 }
 
 function recordCardHtml(r: RecordCardData, _rawNote: string, showSync = true, withActions = false): string {
   const sev = { unknown: "·", minor: "minor", moderate: "moderate", severe: "severe" }[r.severity];
+  const time = r.createdAt ? ` · ${r.createdAt.slice(11, 16)}` : "";
   return `
     <div class="record sev-${r.severity}">
       <div class="record-head">
@@ -281,7 +298,7 @@ function recordCardHtml(r: RecordCardData, _rawNote: string, showSync = true, wi
         <span class="muted">${escapeHtml(r.component)}</span>
         ${showSync ? (r.syncState === "pending" ? `<span class="chip pending">⏳ pending sync</span>` : `<span class="chip online">✓ synced</span>`) : ""}
       </div>
-      <div class="record-meta">${escapeHtml(r.quantity)} · severity: ${sev}${r.extractedBy === "on_device" ? ` · <span class="chip device">⚡ on-device</span>` : r.extractedBy === "rule_based" ? ` · <span class="chip unavailable">⚙ rule-based</span>` : ` · <span class="chip cloud">☁ cloud</span>`}</div>
+      <div class="record-meta">${escapeHtml(r.quantity)} · severity: ${sev}${time}${r.extractedBy === "on_device" ? ` · <span class="chip device">⚡ on-device</span>` : r.extractedBy === "rule_based" ? ` · <span class="chip unavailable">⚙ rule-based</span>` : ` · <span class="chip cloud">☁ cloud</span>`}</div>
       ${r.notes ? `<div class="record-notes">${escapeHtml(r.notes)}</div>` : ""}
       ${withActions ? `<div class="row"><button class="ghost check-btn">Check severity vs reference</button><span class="check-out"></span></div>` : ""}
     </div>`;
@@ -295,7 +312,7 @@ async function refreshRecords(): Promise<void> {
   document.querySelector("#record-count")!.textContent = `(${records.length})`;
   list.innerHTML = records.length
     ? records.map((r) => recordCardHtml(r, r.rawNote, true, true)).join("")
-    : `<div class="empty">No records yet. Capture your first defect above — try it with DevTools offline.</div>`;
+    : `<div class="empty">No records yet — type a field note above and hit <strong>⚡ Capture</strong>. It works offline; records sync when you're back in range.</div>`;
 
   // Wire severity cross-check buttons (F4, on-device).
   list.querySelectorAll(".record").forEach((el, i) => {
@@ -333,8 +350,16 @@ async function onAsk(): Promise<void> {
 
 async function onBackInRange(): Promise<void> {
   if (!activeProject) return;
-  const n = await store.syncPending(activeProject.id);
   const btn = document.querySelector("#sync-btn")!;
+  if (runtime.mode === "live") {
+    btn.textContent = "↻ Back in range…";
+    const n = await store.ackPending(activeProject.id);
+    btn.textContent = `↻ Back in range (${n} synced)`;
+    setTimeout(() => (btn.textContent = "↻ Back in range"), 2500);
+    void refreshRecords();
+    return;
+  }
+  const n = await store.syncPending(activeProject.id);
   btn.textContent = `↻ Back in range (${n} synced)`;
   setTimeout(() => (btn.textContent = "↻ Back in range"), 2500);
   void refreshRecords();
@@ -351,15 +376,39 @@ async function onDraftReport(): Promise<void> {
   out.innerHTML = `<div class="muted">drafting in cloud…</div>`;
   try {
     const answer = await draftReport(records);
-    out.innerHTML = answer.text
-      ? answerBlock("Inspection report draft", answer, `<pre class="report">${escapeHtml(answer.text)}</pre>`)
-      : answerBlock("Inspection report draft", answer);
+    if (!answer.text) {
+      out.innerHTML = answerBlock("Inspection report draft", answer);
+      return;
+    }
+    out.innerHTML =
+      answerBlock("Inspection report draft", answer, `<pre class="report">${escapeHtml(answer.text)}</pre>`) +
+      `<div class="row report-actions">
+         <button id="copy-md" class="ghost">Copy Markdown</button>
+         <button id="print-md" class="ghost">Print / PDF</button>
+         <span id="copy-state" class="muted"></span>
+       </div>`;
+    out.querySelector("#copy-md")?.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(answer.text);
+        const st = out.querySelector("#copy-state")!;
+        st.textContent = "copied ✓";
+        setTimeout(() => (st.textContent = ""), 2000);
+      } catch (e) {
+        out.querySelector("#copy-state")!.textContent = `copy failed: ${String(e)}`;
+      }
+    });
+    out.querySelector("#print-md")?.addEventListener("click", () => window.print());
   } catch (e) {
     out.innerHTML = `<div class="ai-block error">Report drafting failed: ${escapeHtml(String(e))}</div>`;
   }
 }
 
 /* ---------- global engine chip ---------- */
+
+// When Firestore acks an offline write (pending → synced), refresh the list.
+onStoreChange(() => {
+  if (activeProject) void refreshRecords();
+});
 
 onEngineUpdate((badge) => {
   const chip = document.querySelector("#engine-chip");
@@ -384,4 +433,13 @@ function escapeHtml(s: string): string {
   await initFirebase();
   await seedIfEmpty();
   render();
+  // PWA shell: register the service worker (production builds only — the SW
+  // precaches the app shell so a cold start still renders offline; it never
+  // caches cross-origin Firebase/Gemini API traffic).
+  if (import.meta.env.PROD && "serviceWorker" in navigator) {
+    const reg = () => navigator.serviceWorker.register("/sw.js").catch((e) => console.warn("[sw] registration failed:", e));
+    // The load event may already have fired while Firebase was initializing.
+    if (document.readyState === "complete") void reg();
+    else window.addEventListener("load", () => void reg());
+  }
 })();
