@@ -45,7 +45,12 @@ For UI demonstrations of the cloud badge states before a Firebase project is wir
 npm test          # unit tests: rule-based extraction, conflict merge, pending queue, bootstrap env writer
 node scripts/e2e-full.mjs   # full offline→sync walkthrough (Chrome, asserts all four features)
 node scripts/e2e-emulator.mjs  # REAL Firebase SDK path against the local Emulator Suite — see below
+node scripts/e2e-ondevice.mjs  # on-device proof — real on-device badge only, honest skip otherwise
 ```
+
+### Launching Chrome for on-device runs
+
+Puppeteer's **default launch args include `--disable-features=…OptimizationHints…`**, which alone makes `LanguageModel.availability()` report `unavailable` forever (A/B verified 2026-11-23 — the culprit was never the machine's GPU). Any harness that exercises the on-device path must launch with `ignoreDefaultArgs: ["--disable-features"]` (see `scripts/e2e-ondevice.mjs`), and point `--profile` at a Chrome profile that already has the Gemini Nano component installed — the model is a per-profile ~4 GB download. `scripts/e2e-ondevice.mjs` fails honestly (exit 2, `tools/ondevice-proof.json` says `model-not-available`) when the model isn't in place; nothing is ever simulated on that path.
 
 ## Emulator suite (proves the real-SDK path, no Firebase project needed)
 
