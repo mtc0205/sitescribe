@@ -42,9 +42,32 @@ For UI demonstrations of the cloud badge states before a Firebase project is wir
 ## Tests & e2e
 
 ```bash
-npm test          # unit tests: rule-based extraction, conflict merge, pending queue
+npm test          # unit tests: rule-based extraction, conflict merge, pending queue, bootstrap env writer
 node scripts/e2e-full.mjs   # full offline→sync walkthrough (Chrome, asserts all four features)
+node scripts/e2e-emulator.mjs  # REAL Firebase SDK path against the local Emulator Suite — see below
 ```
+
+## Emulator suite (proves the real-SDK path, no Firebase project needed)
+
+`firebase.json` configures the Emulator Suite (auth 9099, firestore 8080, hosting 5000, UI 4000) and `.firebaserc` pins the reserved demo project id `demo-sitescribe`.
+
+```bash
+# once: extract a JDK (e.g. Temurin 21) and point JAVA_HOME at it
+VITE_USE_EMULATOR=1 npm run build          # bakes the emulator flag into dist/
+firebase emulators:start                   # then open http://127.0.0.1:5000
+```
+
+`node scripts/e2e-emulator.mjs` does all of the above itself (build, boot, headless Chrome, teardown) and asserts: anonymous sign-in really creates a user; a record captured **offline** lands in the Firestore emulator after reconnect (verified by a direct REST read); Remote Config falls back to baked-in defaults; and the security rules reject cross-user reads (403 via REST with both users' idTokens). Screenshots land in `../tools/emu-*.png`.
+
+## Ship it: one-command bootstrap (needs your Google login once)
+
+```bash
+node scripts/firebase-bootstrap.mjs --login
+```
+
+Creates the Firebase project, web app, Firestore database, writes `.env` (git-ignored), deploys hosting + Firestore rules + Remote Config, and *verifies* what it can (anonymous sign-in probe via `accounts:signUp`, hosting URL fetch). `--dry-run` prints every step without touching anything; `--deploy-only` rebuilds and redeploys after you paste an App Check key. Remaining console clicks (Anonymous auth, AI Logic "Get started", App Check key) are printed with exact navigation paths.
+
+> App Check is required by Firebase AI Logic (auto-enforced since 2026-11-02). The app resolves it at build time: debug provider on localhost, `VITE_RECAPTCHA_SITE_KEY` (recommended for the hosted URL) or `VITE_APPCHECK_DEBUG_TOKEN` (accepted by the hackathon rules) from `.env` — see `.env.example`.
 
 ## Run with Firebase
 
