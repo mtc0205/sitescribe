@@ -29,6 +29,7 @@ test("buildEnvFile writes one-line config and preserves App Check keys", () => {
     "# old comment",
     "VITE_FIREBASE_CONFIG={\"apiKey\":\"old\"}",
     "VITE_RECAPTCHA_SITE_KEY=6LeAAA",
+    "VITE_RECAPTCHA_PROVIDER=enterprise",
     "VITE_APPCHECK_DEBUG_TOKEN=",
     "VITE_USE_EMULATOR=0",
   ].join("\n");
@@ -37,6 +38,7 @@ test("buildEnvFile writes one-line config and preserves App Check keys", () => {
   assert.equal(parsed.VITE_FIREBASE_CONFIG, '{"apiKey":"AIz-new","projectId":"sitescribe-x"}');
   assert.ok(!env.split("\n").some((l) => l.startsWith("VITE_FIREBASE_CONFIG") && l.includes("old")));
   assert.equal(parsed.VITE_RECAPTCHA_SITE_KEY, "6LeAAA");
+  assert.equal(parsed.VITE_RECAPTCHA_PROVIDER, "enterprise");
   assert.equal(parsed.VITE_APPCHECK_DEBUG_TOKEN, "");
   assert.equal(parsed.VITE_USE_EMULATOR, "0");
 });

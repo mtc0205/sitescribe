@@ -37,7 +37,7 @@ export function parseSdkConfigOutput(text) {
 }
 
 /** Keys preserved from an existing .env when (re)writing it. */
-export const PRESERVED_KEYS = ["VITE_RECAPTCHA_SITE_KEY", "VITE_APPCHECK_DEBUG_TOKEN"];
+export const PRESERVED_KEYS = ["VITE_RECAPTCHA_SITE_KEY", "VITE_RECAPTCHA_PROVIDER", "VITE_APPCHECK_DEBUG_TOKEN"];
 
 /**
  * Read KEY=VALUE pairs from an .env file (comments with # ignored).
@@ -72,6 +72,8 @@ export function buildEnvFile(config, existingEnvContent = "") {
     "# ---- App Check (required by Firebase AI Logic) — fill ONE, then rerun",
     "#      `node scripts/firebase-bootstrap.mjs --deploy-only` ----",
     `VITE_RECAPTCHA_SITE_KEY=${existing.VITE_RECAPTCHA_SITE_KEY ?? ""}`,
+    "# (empty = reCAPTCHA v3; set to enterprise if the console registered reCAPTCHA Enterprise)",
+    `VITE_RECAPTCHA_PROVIDER=${existing.VITE_RECAPTCHA_PROVIDER ?? ""}`,
     `VITE_APPCHECK_DEBUG_TOKEN=${existing.VITE_APPCHECK_DEBUG_TOKEN ?? ""}`,
     "",
   ];

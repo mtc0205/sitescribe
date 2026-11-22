@@ -169,7 +169,7 @@ try {
 
   /* ---------- 2. Remote Config falls back to defaults ---------- */
   const toggles = await page.evaluate(() => globalThis.__ssRemoteToggles);
-  check("Remote Config falls back to defaults", !!toggles && toggles.cloudModel === "gemini-2.5-flash" && toggles.featureReportDrafting === true && toggles.featureSeverityCheck === true, JSON.stringify(toggles));
+  check("Remote Config falls back to defaults", !!toggles && toggles.cloudModel === "gemini-3.8-flash" && toggles.featureReportDrafting === true && toggles.featureSeverityCheck === true, JSON.stringify(toggles));
 
   /* ---------- 3. offline capture ---------- */
   await page.click("#project-list .card");

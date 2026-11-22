@@ -137,7 +137,7 @@ function simulatedAnswer(feature: string, prompt: string): AiAnswer {
 }
 
 let aiService: AI | null = null;
-let cloudModelName = "gemini-2.5-flash";
+let cloudModelName = "gemini-3.8-flash";
 
 /**
  * Bind the AI service to an initialized Firebase app.

@@ -1,8 +1,8 @@
 {
   "parameters": {
     "cloud_model": {
-      "defaultValue": { "value": "gemini-2.5-flash" },
-      "description": "Cloud fallback/report model id used by Firebase AI Logic."
+      "defaultValue": { "value": "gemini-3.8-flash" },
+      "description": "Cloud fallback/report model id used by Firebase AI Logic (2.5 Flash is auto-routed to newer models from 2026-12-01)."
     },
     "feature_report_drafting": {
       "defaultValue": { "value": "true" },

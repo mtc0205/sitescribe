@@ -85,14 +85,18 @@ export async function initFirebase(): Promise<RuntimeMode> {
   //   1. localhost/127.0.0.1 → debug provider; console prints a token to
   //      register once in App Check → Apps → Manage debug tokens.
   //   2. VITE_RECAPTCHA_SITE_KEY (or VITE_FIREBASE_CONFIG.recaptchaSiteKey) →
-  //      real reCAPTCHA v3 attestation — recommended for the hosted URL.
+  //      real reCAPTCHA attestation — recommended for the hosted URL. The
+  //      provider class must match what the console registered: v3 by default,
+  //      or enterprise when VITE_RECAPTCHA_PROVIDER=enterprise.
   //   3. VITE_APPCHECK_DEBUG_TOKEN → explicit debug token, accepted from any
   //      origin once registered (the hackathon rules accept debug tokens).
   if (!EMULATOR) {
     const isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
     const siteKey = (import.meta.env.VITE_RECAPTCHA_SITE_KEY as string | undefined) || cfg.recaptchaSiteKey;
     const explicitDebugToken = import.meta.env.VITE_APPCHECK_DEBUG_TOKEN as string | undefined;
-    const { initializeAppCheck, ReCaptchaV3Provider } = await import("firebase/app-check");
+    const providerKind: "v3" | "enterprise" =
+      (import.meta.env.VITE_RECAPTCHA_PROVIDER as string | undefined)?.toLowerCase() === "enterprise" ? "enterprise" : "v3";
+    const { initializeAppCheck, ReCaptchaV3Provider, ReCaptchaEnterpriseProvider } = await import("firebase/app-check");
     if (isLocal || !siteKey) {
       const dbg = self as unknown as { FIREBASE_APPCHECK_DEBUG_TOKEN: boolean | string };
       dbg.FIREBASE_APPCHECK_DEBUG_TOKEN = explicitDebugToken ?? true;
@@ -102,10 +106,13 @@ export async function initFirebase(): Promise<RuntimeMode> {
           : "[app-check] debug provider — register the token printed below in App Check → Apps → Manage debug tokens",
       );
     } else {
-      console.info("[app-check] reCAPTCHA v3 provider (site key from env)");
+      console.info(`[app-check] reCAPTCHA ${providerKind} provider (site key from env)`);
     }
+    // Google's public test key only applies when no real site key is set, i.e.
+    // on the debug path above, where the SDK swaps in the debug provider anyway.
+    const key = siteKey ?? "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI";
     initializeAppCheck(app, {
-      provider: new ReCaptchaV3Provider(siteKey ?? "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI"),
+      provider: providerKind === "enterprise" ? new ReCaptchaEnterpriseProvider(key) : new ReCaptchaV3Provider(key),
       isTokenAutoRefreshEnabled: true,
     });
   }
@@ -134,7 +141,7 @@ export async function initFirebase(): Promise<RuntimeMode> {
   rc.settings.minimumFetchIntervalMillis = 600_000;
   if (EMULATOR) rc.settings.fetchTimeoutMillis = 5_000; // no RC emulator for web SDK → fail fast to defaults
   rc.defaultConfig = {
-    cloud_model: "gemini-2.5-flash",
+    cloud_model: "gemini-3.8-flash",
     feature_report_drafting: true,
     feature_severity_check: true,
   };
@@ -168,7 +175,7 @@ export async function initFirebase(): Promise<RuntimeMode> {
 }
 
 const cachedToggles: RemoteToggles = {
-  cloudModel: "gemini-2.5-flash",
+  cloudModel: "gemini-3.8-flash",
   featureReportDrafting: true,
   featureSeverityCheck: true,
 };
