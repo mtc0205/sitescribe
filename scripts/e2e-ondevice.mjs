@@ -1,5 +1,6 @@
 /**
- * On-device inference proof (run #15, 2026-11-23).
+ * On-device inference proof (run #15, 2026-11-23; launch recipe corrected after
+ * the parallel diagnostics agent's A/B result).
  *
  * Proves the F1/F2 on-device path with REAL SDK telemetry — the assertions
  * accept ONLY a genuine "⚡ On-device · Gemini Nano" badge (driven by
@@ -7,12 +8,14 @@
  * simulated or cloud badge fails the run. Nothing here can fake a pass.
  *
  * Requirements (see README "Launching Chrome for on-device runs"):
- *  - Chromium's OptimizationHints must stay enabled, so we drop puppeteer's
- *    default `--disable-features` arg (A/B verified 2026-11-23: with the
- *    default args LanguageModel.availability() is permanently "unavailable").
+ *  - The on-device model stack needs Chromium's OptimizationHints feature.
+ *    puppeteer's default args carry `--disable-features=…,OptimizationHints,…`
+ *    as ONE full string, so `ignoreDefaultArgs: ['--disable-features']` does
+ *    NOT remove it (A/B verified 2026-11-23: that form stays `unavailable`).
+ *    Re-enabling it through `--enable-features=OptimizationHints` works.
  *  - The Gemini Nano model component must already be installed in the Chrome
  *    profile — pass the shared evidence profile via --profile (default:
- *    ../tools/nano2/profiles/E1b, which has the ~4 GB model downloaded).
+ *    ../tools/nano2/profiles/E1b, which holds the ~4 GB model).
  *
  * Flow: launch -> probe availability (honest early exit if the model is not
  * installed) -> go OFFLINE (CDP) -> F1: type a field note + click ⚡ Capture
@@ -24,7 +27,7 @@
  *   node scripts/e2e-ondevice.mjs --profile <dir>        # another profile
  *   node scripts/e2e-ondevice.mjs --headed               # show the window
  *   node scripts/e2e-ondevice.mjs --url https://…        # hosted URL (post-deploy)
- * Exit codes: 0 = on-device proof captured; 1 = assertion failed;
+ * Exit codes: 0 = on-device proof captured; 1 = assertion failed or error;
  *             2 = model not available (honest skip, try again later).
  */
 import puppeteer from "puppeteer-core";
@@ -66,10 +69,9 @@ const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: HEADLESS,
   userDataDir: PROFILE,
-  // CRITICAL: keep OptimizationHints enabled (puppeteer's default
-  // --disable-features arg disables the on-device model stack).
-  ignoreDefaultArgs: ["--disable-features"],
-  args: ["--no-first-run", "--no-default-browser-check", "--window-size=1280,900"],
+  // CRITICAL: keep OptimizationHints enabled (see header). The explicit
+  // --enable-features entry overrides puppeteer's default disable list.
+  args: ["--no-first-run", "--no-default-browser-check", "--window-size=1280,900", "--enable-features=OptimizationHints"],
 });
 
 const proof = {
@@ -85,6 +87,10 @@ const proof = {
   status: "incomplete",
 };
 
+/** Thrown on the honest-skip path so the browser is still closed in `finally`. */
+class HonestSkip extends Error {}
+
+let exitCode = 1;
 try {
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 900 });
@@ -92,6 +98,15 @@ try {
 
   await page.goto(URL_BASE + "/?engine=off", { waitUntil: "load", timeout: 60_000 });
   await page.waitForSelector("#project-list .card", { timeout: 60_000 });
+
+  // Optional cold-start control: --warmup=<ms> waits before the first AI call so
+  // a run can tell "model still loading" apart from "request type unsupported".
+  const WARMUP = Number(opt("warmup", "0")) || 0;
+  proof.warmupMs = WARMUP;
+  if (WARMUP > 0) {
+    console.log(`[ondevice] warm-up wait ${WARMUP} ms`);
+    await sleep(WARMUP);
+  }
 
   // ---- 0. honest availability probe (never fabricated) ----
   const probe = await page.evaluate(async () => {
@@ -110,16 +125,17 @@ try {
     proof.status = "model-not-available";
     proof.offlineAtCapture = false;
     writeProof(proof);
+    await page.screenshot({ path: SHOT }).catch(() => {});
     console.log(
-      "\n[ondevice] HONEST SKIP — the on-device model is not available in this profile/browser yet\n" +
+      "\n[ondevice] HONEST SKIP — the on-device model is not available in this profile/browser\n" +
         `            (exposed=${probe.exposed}, availability=${probe.availability}).\n` +
-        "            No inference was run and nothing was faked. Once the Gemini Nano\n" +
-        "            component finishes downloading into the profile, rerun:\n" +
+        "            No inference was run and nothing was faked. Possible causes: the Gemini Nano\n" +
+        "            component is not installed in this profile, or Chrome lost OptimizationHints.\n" +
+        "            Rerun with the shared evidence profile, or add --headed:\n" +
         "              node scripts/e2e-ondevice.mjs            (shared evidence profile)\n" +
         "              node scripts/e2e-ondevice.mjs --headed   (if headless reports unavailable)",
     );
-    await page.screenshot({ path: SHOT }).catch(() => {});
-    process.exit(2);
+    throw new HonestSkip();
   }
 
   // ---- go offline BEFORE capture: on-device must serve with zero network ----
@@ -128,6 +144,10 @@ try {
   await cdp.send("Network.emulateNetworkConditions", { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
   await page.evaluate(() => dispatchEvent(new Event("offline")));
   proof.offlineAtCapture = true;
+  // Prove the network is really cut: any fetch must fail.
+  proof.offlineFetchCheck = await page
+    .evaluate(() => fetch("https://www.google.com/generate_204", { mode: "no-cors", cache: "no-store" }).then(() => "fetch SUCCEEDED (network not cut!)").catch((e) => "fetch failed as expected: " + String(e).slice(0, 60)))
+    .catch((e) => "fetch threw: " + String(e).slice(0, 60));
   await sleep(600);
 
   await page.click("#project-list .card");
@@ -175,12 +195,17 @@ try {
   writeProof(proof);
   await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 40, downloadThroughput: 2_000_000, uploadThroughput: 1_000_000 });
   console.log(`\n[ondevice] ${results.length - failed.length}/${results.length} assertions passed`);
-  process.exit(failed.length ? 1 : 0);
+  exitCode = failed.length ? 1 : 0;
 } catch (e) {
-  proof.status = "error: " + String(e).slice(0, 200);
-  writeProof(proof);
-  console.error("[ondevice] error:", e);
-  process.exit(1);
+  if (e instanceof HonestSkip) {
+    exitCode = 2;
+  } else {
+    proof.status = "error: " + String(e).slice(0, 200);
+    writeProof(proof);
+    console.error("[ondevice] error:", e);
+    exitCode = 1;
+  }
 } finally {
   await browser.close().catch(() => {});
 }
+process.exit(exitCode);

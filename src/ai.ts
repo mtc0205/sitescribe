@@ -36,12 +36,19 @@ const DEFECT_SCHEMA = {
   required: ["component", "defectType", "quantity", "severity", "notes"],
 } as const;
 
+// The JSON shape is spelled out in the prompt itself because the on-device
+// path of the SDK ignores `generationConfig` (responseSchema/responseMimeType)
+// and only forwards the prompt text; the cloud path still enforces
+// DEFECT_SCHEMA on top of it.
 const STRUCTURE_PROMPT = `You are a field assistant for civil infrastructure inspection.
 Convert the engineer's spoken/typed note into ONE structured defect record.
-Use standard bridge/tunnel inspection vocabulary (e.g. longitudinal crack, spalling, efflorescence, seepage, delamination).
-quantity: keep the engineer's numbers and units, never invent precision.
-severity: judge only from explicit cues in the note; when unsure use "unknown".
-notes: short, factual, no advice.`;
+Reply with ONLY a JSON object — no prose, no Markdown, no code fences — with exactly these keys:
+{"component": string, "defectType": string, "quantity": string, "severity": string, "notes": string}
+- component: structural member or location, e.g. "web of girder G2"
+- defectType: defect category in standard bridge/tunnel inspection vocabulary (e.g. longitudinal crack, spalling, efflorescence, seepage, delamination)
+- quantity: size/extent exactly as stated, e.g. "~2mm wide, ~3m long"; keep the engineer's numbers and units, never invent precision
+- severity: one of "unknown", "minor", "moderate", "severe"; judge only from explicit cues in the note; when unsure use "unknown"
+- notes: short, factual, no advice (seepage, corrosion, exposure, access constraints)`;
 
 const QA_PROMPT = `You are a field assistant for civil infrastructure inspection.
 Answer in at most 4 short sentences, practical and safety-first.
@@ -163,18 +170,22 @@ function badgeFor(engine: "on_device" | "in_cloud", fellBack: boolean): EngineBa
     : { engine, fellBack, label: "Cloud · Gemini" };
 }
 
-/** In demo mode there is no real cloud backend: fail fast so the honest
- *  rule-based fallback kicks in within seconds instead of hanging a minute.
- *  Emulator mode has Auth/Firestore emulators but no AI Logic emulator, so
- *  cloud calls fail there too — same fast budget. */
-function aiBudgetMs(): number {
-  try {
-    // Imported lazily to avoid a cycle; demo = placeholder config.
-    const mode = (globalThis as { __ssRuntimeMode?: string }).__ssRuntimeMode;
-    return mode === "demo" || mode === "emulator" ? 12_000 : 45_000;
-  } catch {
-    return 45_000;
+let deviceBudgetedCalls = 0;
+
+/**
+ * How long a structuring call may take before the honest rule-based fallback
+ * kicks in. Demo and emulator modes have no real cloud backend (there is no AI
+ * Logic emulator), so with no on-device model they fail fast (12 s). When the
+ * on-device model IS installed, the first inference of a browser session also
+ * pays the model-load cost, so that one call gets a long budget and later calls
+ * a normal one. Live mode with no device model: 45 s.
+ */
+export async function aiBudgetMs(): Promise<number> {
+  if ((await deviceAvailability()) === "available") {
+    return deviceBudgetedCalls++ === 0 ? 90_000 : 45_000;
   }
+  const mode = (globalThis as { __ssRuntimeMode?: string }).__ssRuntimeMode;
+  return mode === "demo" || mode === "emulator" ? 12_000 : 45_000;
 }
 
 /**
@@ -187,6 +198,16 @@ export async function warmDeviceModel(): Promise<void> {
   await model.initializeDeviceModel((p) => {
     emitEngine({ engine: "download", downloadProgress: p, label: `Downloading on-device model · ${Math.round(p * 100)}%` });
   });
+  // `initializeDeviceModel` only (down)loads the component; it does not bring
+  // the weights into memory. Chrome evicts an unused model and the SDK keeps
+  // exactly one session alive between calls, so one tiny local inference is
+  // what actually preloads it. Done only when the model is already installed —
+  // a download is never started from here without the user's click.
+  if ((await deviceAvailability()) === "available") {
+    await model
+      .generateContent({ contents: [{ role: "user", parts: [{ type: "text", text: "Reply with the single word: ready." }] }] })
+      .catch((e: unknown) => console.warn("[ai] on-device preload inference failed:", e));
+  }
   emitEngine({ engine: "pending", label: "On-device model ready" });
 }
 
@@ -196,6 +217,17 @@ export async function warmDeviceModel(): Promise<void> {
  */
 export function deviceApiAvailable(): boolean {
   return typeof self !== "undefined" && "LanguageModel" in self;
+}
+
+/** Chrome's own answer for the on-device model: "unavailable" | "downloadable" | "downloading" | "available" (null when the API is absent). */
+export async function deviceAvailability(): Promise<string | null> {
+  if (!deviceApiAvailable()) return null;
+  try {
+    const api = (self as unknown as { LanguageModel: { availability(): Promise<string> } }).LanguageModel;
+    return await api.availability();
+  } catch {
+    return null;
+  }
 }
 
 interface GenerateExtras {
@@ -238,7 +270,7 @@ export async function structureNote(note: string): Promise<{ record: DefectJson;
     // Race the AI call against a timeout so an unreachable cloud doesn't hang
     // the capture flow in the field (worst case: fall through to rules).
     // Demo mode (placeholder config) has no real cloud: fail fast to rules.
-    const budgetMs = aiBudgetMs();
+    const budgetMs = await aiBudgetMs();
     const answer = await Promise.race([
       ask(
         InferenceMode.PREFER_ON_DEVICE,
@@ -252,8 +284,13 @@ export async function structureNote(note: string): Promise<{ record: DefectJson;
     let parsed: DefectJson;
     try {
       parsed = repairJson(answer.text);
+      if (!parsed || typeof parsed !== "object" || typeof parsed.component !== "string") throw new Error("unexpected JSON shape");
     } catch {
-      parsed = { component: "", defectType: "", quantity: "", severity: "unknown", notes: note };
+      // The engine answered, but not with usable JSON (the on-device path has
+      // no schema enforcement). Keep the loop alive with the transparent
+      // rule-based record and say so inside the record itself.
+      const fallback = ruleBasedStructure(note);
+      parsed = { ...fallback, notes: `${fallback.notes} [engine reply was not valid JSON — fields structured by rules]`.trim() };
     }
     return { record: parsed, answer };
   } catch (e) {

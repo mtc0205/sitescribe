@@ -208,9 +208,11 @@ const browser = await puppeteer.launch({
   headless: !args.includes("--headed"), // headless by default: CDP screencast is identical
   userDataDir: PROFILE,
   // Keep Chromium's OptimizationHints stack enabled — puppeteer's default
-  // --disable-features list disables it and kills the on-device model.
-  ignoreDefaultArgs: ["--disable-features"],
-  args: ["--no-first-run", "--no-default-browser-check", `--window-size=${WIDTH},${HEIGHT + 80}`],
+  // --disable-features list disables it and kills the on-device model. That
+  // list is ONE full string, so `ignoreDefaultArgs: ["--disable-features"]`
+  // does NOT remove it (A/B verified 2026-11-23); re-enabling through
+  // --enable-features does override it (verified).
+  args: ["--no-first-run", "--no-default-browser-check", "--enable-features=OptimizationHints", `--window-size=${WIDTH},${HEIGHT + 80}`],
 });
 const page = await browser.newPage();
 await page.setViewport({ width: WIDTH, height: HEIGHT });

@@ -3,7 +3,7 @@
  * Every AI output renders next to an EngineBadge driven by real SDK telemetry.
  */
 import { initFirebase, runtime } from "./firebase";
-import { structureNote, askFieldQuestion, draftReport, crossCheckSeverity, warmDeviceModel, onEngineUpdate, deviceApiAvailable, initEngineSimulationFromUrl, engineSimulation, getEngineLog } from "./ai";
+import { structureNote, askFieldQuestion, draftReport, crossCheckSeverity, warmDeviceModel, deviceAvailability, onEngineUpdate, deviceApiAvailable, initEngineSimulationFromUrl, engineSimulation, getEngineLog } from "./ai";
 import { store, seedIfEmpty, onStoreChange } from "./store";
 import type { AiAnswer, DefectRecord, EngineBadgeInfo, Project } from "./types";
 import "./styles.css";
@@ -433,6 +433,10 @@ function escapeHtml(s: string): string {
   await initFirebase();
   await seedIfEmpty();
   render();
+  // Preload an already-installed on-device model so the first capture does not
+  // wait for the weights to load. This never starts a download — that still
+  // needs the user's click (see ensureWarm).
+  if ((await deviceAvailability()) === "available") void ensureWarm();
   // PWA shell: register the service worker (production builds only — the SW
   // precaches the app shell so a cold start still renders offline; it never
   // caches cross-origin Firebase/Gemini API traffic).
