@@ -187,6 +187,27 @@ for (const [w, h] of SIZES) {
     await auditPage(p, DIAG_SELECTORS, `diagnostics ${tag}`);
   });
 
+  // Diagnostics once the session has engine events to show (one capture first).
+  await shoot("diagnostics-log", w, h, async (p) => {
+    await p.click("#project-list .card");
+    await p.waitForSelector("#note");
+    await p.type("#note", NOTE);
+    await p.click("#capture-btn");
+    await p.waitForSelector("#capture-result .ai-block", { timeout: 60_000 });
+    await p.click("#back");
+    await p.waitForSelector("#engine-panel");
+    await p.waitForFunction(() => document.querySelectorAll("#engine-log-list .log-row").length >= 1, { timeout: 10_000 });
+    await p.click("#engine-panel > summary");
+    await p.evaluate(() => document.querySelector("#engine-panel")?.scrollIntoView({ block: "center" }));
+    const log = await p.evaluate(() => ({
+      rows: document.querySelectorAll("#engine-log-list .log-row").length,
+      first: document.querySelector("#engine-log-list .log-row")?.textContent.replace(/\s+/g, " ").trim() ?? null,
+      zone: document.querySelector("#log-zone")?.textContent ?? null,
+    }));
+    console.log(`[engine-log ${tag}] ${JSON.stringify(log)}`);
+    await auditPage(p, DIAG_SELECTORS, `diagnostics-log ${tag}`);
+  });
+
   await shoot("session", w, h, async (p) => {
     await p.click("#project-list .card");
     await p.waitForSelector("#note");
