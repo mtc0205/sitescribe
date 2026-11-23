@@ -102,7 +102,13 @@ export const store = {
    *  The write is issued fire-and-forget so the UI never blocks on the
    *  network: the local cache (incl. pending writes) serves the listing. */
   async addRecord(record: Omit<DefectRecord, "id">): Promise<DefectRecord> {
-    const full: DefectRecord = { ...record, id: uid(), syncState: "pending" };
+    // Live: the record is born `pending` whatever the caller says, and flips to
+    // `synced` only when Firestore acknowledges the write. Demo/local: there is
+    // no server at all, so the caller's state stands (online capture and the
+    // demo seeds are "synced", an offline capture is "pending") — forcing
+    // "pending" here used to flag every demo record as awaiting a sync.
+    const live = runtime.mode === "live" && !!runtime.app;
+    const full: DefectRecord = { ...record, id: uid(), ...(live ? { syncState: "pending" as const } : {}) };
     if (runtime.mode === "live" && runtime.app) {
       const { getFirestore, collection, doc, setDoc, updateDoc, waitForPendingWrites } = await import("firebase/firestore");
       const uidv = (await import("firebase/auth")).getAuth(runtime.app).currentUser?.uid;
