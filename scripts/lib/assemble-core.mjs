@@ -59,21 +59,76 @@ export function sourceTimeAt(tMs, { t0, t1, recMs, outDurMs, maxStretch }) {
 }
 
 /**
+ * Beat anchors let the action follow the words instead of a uniform stretch:
+ * the harness records marks ("capture-1-result") and the script map says which
+ * narration moment each mark belongs to. Each spec entry:
+ *   { mark, at: <vo id> }                         → mark lands on that line's start
+ *   { mark, into: <vo id>, fraction: 0..1, minus: s }  → that far into the line, s seconds earlier
+ * Returns anchors [{mark, src, out}] (src = capture time in epoch ms, out = film
+ * time inside the shot, ms) incl. the two end points, plus notes for anything
+ * that had to be ignored.
+ */
+export function resolveBeats(spec, marks, segments, shotStartMs, shotDurationMs, span) {
+  const byId = Object.fromEntries(segments.map((s) => [s.id, s]));
+  const markTs = Object.fromEntries((marks ?? []).map((m) => [m.label, m.ts > 1e11 ? m.ts : m.ts * 1000]));
+  const notes = [];
+  const found = [];
+  for (const b of spec ?? []) {
+    const id = b.at ?? b.into;
+    const seg = byId[id];
+    if (!seg) {
+      notes.push(`beat "${b.mark}": unknown narration "${id}"`);
+      continue;
+    }
+    if (markTs[b.mark] == null) {
+      notes.push(`beat "${b.mark}": the capture has no such mark`);
+      continue;
+    }
+    const out = seg.startMs + (b.fraction ?? 0) * seg.durationMs - (b.minus ?? 0) * 1000 - shotStartMs;
+    found.push({ mark: b.mark, src: Math.min(span.tEnd, Math.max(span.t0, markTs[b.mark])), out: Math.min(shotDurationMs, Math.max(0, out)) });
+  }
+  found.sort((a, b) => a.src - b.src || a.out - b.out);
+  const kept = [];
+  for (const a of found) {
+    if (kept.length && a.out < kept.at(-1).out) {
+      notes.push(`beat "${a.mark}": would run the film backwards — ignored`);
+      continue;
+    }
+    kept.push(a);
+  }
+  return { anchors: [{ mark: "start", src: span.t0, out: 0 }, ...kept, { mark: "end", src: span.tEnd, out: shotDurationMs }], notes };
+}
+
+/** Piecewise-linear capture time for film time `tMs` through beat anchors. */
+export function sourceTimeAtBeats(tMs, anchors) {
+  let i = 0;
+  while (i + 2 < anchors.length && tMs >= anchors[i + 1].out) i++;
+  const a = anchors[i];
+  const b = anchors[i + 1];
+  const spanOut = b.out - a.out;
+  const u = spanOut > 0 ? Math.min(1, Math.max(0, (tMs - a.out) / spanOut)) : 1;
+  return a.src + u * (b.src - a.src);
+}
+
+/**
  * Resample a variable-rate capture to a constant frame rate BY TIMESTAMP:
  * for each of `outFrames` output frames (mid-frame instants) pick the captured
  * frame with the latest timestamp ≤ the source time. Returns file names.
+ * With `anchors` (≥ 2) the capture time follows the beats, otherwise the
+ * stretch policy of sourceTimeAt applies.
  */
-export function sampleFrames(frames, outFrames, { outDurMs, maxStretch }) {
+export function sampleFrames(frames, outFrames, { outDurMs, maxStretch, anchors }) {
   if (!frames.length) throw new Error("sampleFrames: no captured frames");
   const sorted = [...frames].sort((a, b) => a.ts - b.ts);
   if (sorted.length === 1) return new Array(outFrames).fill(sorted[0].file);
   const ts = frameTimesMs(sorted);
   const span = { ...captureSpan(sorted), outDurMs, maxStretch };
+  const beats = Array.isArray(anchors) && anchors.length >= 2 ? anchors : null;
   const step = outDurMs / outFrames;
   const out = new Array(outFrames);
   let k = 0;
   for (let i = 0; i < outFrames; i++) {
-    const s = sourceTimeAt((i + 0.5) * step, span);
+    const s = beats ? sourceTimeAtBeats((i + 0.5) * step, beats) : sourceTimeAt((i + 0.5) * step, span);
     while (k + 1 < ts.length && ts[k + 1] <= s) k++;
     out[i] = sorted[k].file;
   }
@@ -91,13 +146,14 @@ export function buildTimeline(plan, voMs, opts = {}) {
   const segments = [];
   let cursorMs = 0;
   plan.forEach((p, idx) => {
-    const first = idx === 0;
     const last = idx === plan.length - 1;
     for (const id of p.vo) if (typeof voMs[id] !== "number" || !(voMs[id] > 0)) throw new Error(`no narration audio measured for "${id}" (shot "${p.shot}")`);
     const vos = p.vo.map((id) => ({ id, durationMs: voMs[id] }));
-    // Per-shot overrides (leadMs / tailMs / holdMs) let the caller give the end
-    // card a fixed length or keep the pause after the last narrated shot.
-    const lead = p.leadMs ?? (first ? o.leadMs : 0);
+    // A short lead before every shot's first line (overridable per shot with
+    // leadMs), so a beat anchored "0.5 s before the line" is never clipped;
+    // tailMs / holdMs let the caller give the end card a fixed length or keep
+    // the pause after the last narrated shot.
+    const lead = p.leadMs ?? o.leadMs;
     const tail = p.tailMs ?? (last ? o.tailMs : 0);
     const nominal = lead + vos.reduce((a, v) => a + v.durationMs, 0) + o.gapMs * Math.max(0, vos.length - 1) + tail + (p.holdMs ?? 0);
     // ceil, never round: a shot must never be shorter than the narration it carries

@@ -52,7 +52,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parseNarration, parseShotMap, checkShotMap } from "./lib/script-vo.mjs";
-import { sampleFrames, captureSpan, playbackSpeed, buildTimeline, captionEvents, buildAss, overlayClip, peakOf, pearson, speechBounds, fmtSec } from "./lib/assemble-core.mjs";
+import { sampleFrames, captureSpan, playbackSpeed, resolveBeats, buildTimeline, captionEvents, buildAss, overlayClip, peakOf, pearson, speechBounds, fmtSec } from "./lib/assemble-core.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
@@ -256,7 +256,7 @@ for (const s of map.shots) {
       notices.push(`SKIP ${s.shot}: ${manifest} has no frames`);
       continue;
     }
-    plan.push({ shot: s.shot, vo, source: "capture", recMs: captureSpan(m.frames).recMs, frames: m.frames, dir, url: m.url ?? null, cutin });
+    plan.push({ shot: s.shot, vo, source: "capture", recMs: captureSpan(m.frames).recMs, frames: m.frames, dir, url: m.url ?? null, cutin, marks: m.marks ?? [], evidence: m.evidence ?? null });
     captures.push(m);
   } else if (STILLS[s.shot] && fs.existsSync(STILLS[s.shot])) {
     plan.push({ shot: s.shot, vo, source: "still", recMs: 0, still: STILLS[s.shot], cutin });
@@ -298,26 +298,58 @@ const voMs = Object.fromEntries(Object.entries(vo).map(([id, v]) => [id, v.durat
 
 const timeline = buildTimeline(plan, voMs, { ...TIMING, fps: FPS, maxStretch: MAX_STRETCH });
 for (const seg of timeline.segments) seg.text = TEXT[seg.id];
+
+/* ---------- 3b. beats: anchor the on-screen action to the narration ---------- */
+
+// The harness timestamps what happened ("capture-1-result"); the script map
+// says which narration moment each mark belongs to. Without marks (older
+// captures) a shot falls back to the uniform stretch policy.
+for (const [i, s] of timeline.shots.entries()) {
+  const p = plan[i];
+  if (p.source !== "capture") continue;
+  const alias = (id) => (FALLBACK && map.alternates?.[id]) || id; // the ⚠FB cut renames one line
+  const spec = (map.beats?.[s.shot] ?? []).map((b) => ({ ...b, ...(b.at ? { at: alias(b.at) } : {}), ...(b.into ? { into: alias(b.into) } : {}) }));
+  if (!spec.length) continue;
+  const { anchors, notes } = resolveBeats(spec, p.marks, timeline.segments, s.startMs, s.durationMs, captureSpan(p.frames));
+  p.anchors = anchors;
+  for (const n of notes) notices.push(`${s.shot}: ${n}`);
+  s.anchored = anchors.length - 2;
+  if (FINAL && s.anchored === 0) notices.push(`${s.shot}: no beat could be anchored (the capture has no marks)`);
+}
+
 const narrated = timeline.totalMs - Number(map.endCardSeconds ?? 4) * 1000;
 log(`\n[assemble] timeline — ${timeline.shots.length} shots, ${timeline.totalFrames} frames, ${fmtSec(timeline.totalMs)} (narration ${fmtSec(narrated)}; hard cap 3:00)`);
-log("  shot             source    recorded   speed    out frames   start → end   narration");
+log("  shot             source    recorded   retiming              out frames   start → end   narration");
 for (const [i, s] of timeline.shots.entries()) {
   const p = plan[i];
   let speedTxt = "—";
   if (p.source === "capture") {
     const speed = playbackSpeed({ recMs: p.recMs, outDurMs: s.durationMs, maxStretch: MAX_STRETCH });
-    speedTxt =
-      p.recMs > s.durationMs ? "1.00× trimmed" :
+    speedTxt = s.anchored
+      ? `beats (${s.anchored} anchors)`
+      : p.recMs > s.durationMs ? "1.00× trimmed" :
       p.recMs * MAX_STRETCH < s.durationMs ? `${(1 / speed).toFixed(1)}× slower + hold` :
       speed < 0.995 ? `${(1 / speed).toFixed(2)}× slower` : "1.00×";
   }
-  log(`  ${s.shot.padEnd(16)} ${p.source.padEnd(9)} ${(p.recMs / 1000 || 0).toFixed(1).padStart(7)}s   ${speedTxt.padEnd(19)} ${String(s.nFrames).padStart(8)}     ${fmtSec(s.startMs).padStart(5)} → ${fmtSec(s.startMs + s.durationMs).padStart(5)}   ${s.vo.map((v) => v.id).join(", ") || "—"}`);
+  log(`  ${s.shot.padEnd(16)} ${p.source.padEnd(9)} ${(p.recMs / 1000 || 0).toFixed(1).padStart(7)}s   ${speedTxt.padEnd(21)} ${String(s.nFrames).padStart(8)}     ${fmtSec(s.startMs).padStart(5)} → ${fmtSec(s.startMs + s.durationMs).padStart(5)}   ${s.vo.map((v) => v.id).join(", ") || "—"}`);
 }
 for (const seg of timeline.segments) {
   const v = vo[seg.id];
   log(`     · ${fmtSec(seg.startMs).padStart(5)} → ${fmtSec(seg.endMs).padStart(5)}  ${seg.id}  (${fmtSec(seg.durationMs)}, speech ${v.onsetMs == null ? "none" : `+${v.onsetMs}ms…${v.offsetMs}ms`})`);
 }
 if (timeline.totalMs > 180_000) notices.push(`OVER 3:00 — the film is ${fmtSec(timeline.totalMs)}; the hackathon cap is 3:00`);
+
+// What was really on screen (quoted by the harness from the DOM) — echoed, never invented.
+const badges = [];
+for (const p of plan) {
+  const ev = p.evidence;
+  if (!ev) continue;
+  const onScreen = [ev.captureBadge, ev.newestRecord?.engine, ev.reportBadge].filter(Boolean);
+  badges.push(...onScreen);
+  log(`  on camera in ${p.shot}: status [${(ev.statusChips ?? []).join("] [")}] · capture badge "${ev.captureBadge ?? "—"}" · newest record ${ev.newestRecord ? `${ev.newestRecord.engine} / ${ev.newestRecord.sync} / ${ev.newestRecord.time}` : "—"}`);
+}
+const simulated = badges.filter((b) => /simulated/i.test(b));
+const ruleBased = badges.filter((b) => /rule-based/i.test(b));
 
 const hosted = captures.length > 0 && captures.every((m) => /^https:\/\//.test(m.url ?? "") && !/localhost|127\.0\.0\.1/.test(m.url ?? ""));
 const sources = [...new Set(captures.map((m) => m.url ?? "(url not recorded)"))].join(", ") || "no captures";
@@ -330,10 +362,12 @@ if (FINAL) {
   if (plan.some((p) => p.source === "card" && p.card === "title")) why.push("the cold open is a placeholder title card (pass --still cold-open=<photo>)");
   if (!GITHUB) why.push("--github-url <url> is required for the end card");
   if (missingCutins.length) why.push(`cut-in stills missing: ${missingCutins.join(", ")}`);
+  if (simulated.length) why.push(`simulated badges are on camera: ${simulated.join(" | ")} — the final film needs real engines`);
   if (why.length) die(`refusing --final — the final film must be complete and shot on the hosted URL:\n  - ${why.join("\n  - ")}`);
 }
+if (ruleBased.length && !FINAL) notices.push(`rule-based fallback is on camera (${ruleBased.length} badge${ruleBased.length === 1 ? "" : "s"}) — honest, but not what the final film should show`);
 const LABEL = FINAL ? "" : `TEST RENDER — not the final video · captured from ${sources}`;
-fs.writeFileSync(`${OUT}.plan.json`, JSON.stringify({ generatedAt: new Date().toISOString(), session: SESSION, script: SCRIPT, out: OUT, final: FINAL, label: LABEL, notices, fps: FPS, size: [W, H], shots: timeline.shots.map((s, i) => ({ ...s, source: plan[i].source, url: plan[i].url ?? null })), segments: timeline.segments.map((s) => ({ ...s, text: TEXT[s.id], speech: { onsetMs: vo[s.id].onsetMs, offsetMs: vo[s.id].offsetMs } })), totalFrames: timeline.totalFrames, totalMs: timeline.totalMs }, null, 2));
+fs.writeFileSync(`${OUT}.plan.json`, JSON.stringify({ generatedAt: new Date().toISOString(), session: SESSION, script: SCRIPT, out: OUT, final: FINAL, label: LABEL, notices, fps: FPS, size: [W, H], shots: timeline.shots.map((s, i) => ({ ...s, source: plan[i].source, url: plan[i].url ?? null, anchors: (plan[i].anchors ?? []).map((a) => ({ mark: a.mark, atMs: Math.round(s.startMs + a.out) })), evidence: plan[i].evidence ?? null })), segments: timeline.segments.map((s) => ({ ...s, text: TEXT[s.id], speech: { onsetMs: vo[s.id].onsetMs, offsetMs: vo[s.id].offsetMs } })), totalFrames: timeline.totalFrames, totalMs: timeline.totalMs }, null, 2));
 log(`\n[assemble] plan written → ${OUT}.plan.json`);
 for (const n of notices) log(`[assemble] note: ${n}`);
 if (has("--plan")) process.exit(0);
@@ -369,7 +403,10 @@ for (const [i, s] of timeline.shots.entries()) {
   const p = plan[i];
   let files;
   if (p.source === "capture") {
-    files = sampleFrames(p.frames, s.nFrames, { outDurMs: s.durationMs, maxStretch: MAX_STRETCH }).map((f) => path.join(p.dir, f));
+    files = sampleFrames(p.frames, s.nFrames, { outDurMs: s.durationMs, maxStretch: MAX_STRETCH, anchors: p.anchors }).map((f) => path.join(p.dir, f));
+    if (p.anchors) {
+      log(`[assemble] ${s.shot} beats: ` + p.anchors.slice(1, -1).map((a) => `${a.mark} @${fmtSec(s.startMs + a.out)}`).join(" · "));
+    }
   } else {
     const one = p.source === "still" ? normalizeStill(p.still) : renderCard(p.card, { w: fw, h: fh, tmp, final: FINAL });
     files = new Array(s.nFrames).fill(one);

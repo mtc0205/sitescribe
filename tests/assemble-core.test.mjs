@@ -9,6 +9,8 @@ import {
   sourceTimeAt,
   playbackSpeed,
   captureSpan,
+  resolveBeats,
+  sourceTimeAtBeats,
   sampleFrames,
   buildTimeline,
   chunkCaption,
@@ -113,7 +115,7 @@ test("sampleFrames: tolerates millisecond timestamps (latest frame ≤ source ti
   assert.equal(out[19], "b.jpg"); // b is on screen for the last ~330 ms, not a single instant
 });
 
-test("buildTimeline: every shot lasts its narration (+ pauses), starts on a frame boundary, VO is placed inside", () => {
+test("buildTimeline: every shot lasts its narration (+ lead, pauses, tail), starts on a frame boundary, VO is placed inside", () => {
   const plan = [
     { shot: "intro", source: "capture", recMs: 2_500, vo: ["a", "b"] },
     { shot: "sync", source: "capture", recMs: 9_900, vo: ["c"] },
@@ -123,16 +125,120 @@ test("buildTimeline: every shot lasts its narration (+ pauses), starts on a fram
   assert.equal(t.shots.length, 2);
   const [s1, s2] = t.shots;
   assert.equal(s1.nFrames, 475); // ceil of 474.3 — a shot is never shorter than its narration
-  assert.equal(s2.nFrames, 234); // ceil of 233.4
+  assert.equal(s2.nFrames, 252); // ceil of 251.4: lead + line + tail
   assert.equal(s2.startMs, (475 / 30) * 1000);
   assert.equal(t.totalFrames, s1.nFrames + s2.nFrames);
   assert.equal(t.totalMs, (t.totalFrames / 30) * 1000);
   const seg = Object.fromEntries(t.segments.map((x) => [x.id, x]));
   assert.equal(seg.a.startMs, 600);
   assert.equal(seg.b.startMs, 600 + 8000 + 350);
-  assert.equal(seg.c.startMs, s2.startMs);
+  assert.equal(seg.c.startMs, s2.startMs + 600); // the lead precedes every shot's first line
   // no narration runs past its shot
   for (const s of t.shots) for (const v of s.vo) assert.ok(v.endMs <= s.startMs + s.durationMs + 1e-6);
+});
+
+/* ---------- beats ---------- */
+
+const SEG = (id, startMs, durationMs) => ({ id, startMs, durationMs });
+const SPAN = { t0: 10_000, t1: 20_000, tEnd: 20_200 };
+
+test("resolveBeats: marks land on their narration moments; ends are always anchored", () => {
+  const segments = [SEG("a", 600, 10_000), SEG("b", 10_950, 16_000)];
+  const marks = [
+    { label: "type-1", ts: 10.1 },
+    { label: "click", ts: 15.0 },
+    { label: "result", ts: 17.5 },
+  ];
+  const { anchors, notes } = resolveBeats(
+    [
+      { mark: "click", at: "b", minus: 0.45 },
+      { mark: "result", at: "b" },
+      { mark: "type-1", at: "a" },
+    ],
+    marks,
+    segments,
+    0,
+    27_550,
+    SPAN,
+  );
+  assert.deepEqual(notes, []);
+  assert.deepEqual(
+    anchors.map((a) => [a.mark, a.src, Math.round(a.out)]),
+    [
+      ["start", 10_000, 0],
+      ["type-1", 10_100, 600],
+      ["click", 15_000, 10_500], // 10 950 − 450
+      ["result", 17_500, 10_950],
+      ["end", 20_200, 27_550],
+    ],
+  );
+});
+
+test("resolveBeats: unknown narration and missing marks are reported, not fatal", () => {
+  const segments = [SEG("a", 600, 10_000)];
+  const { anchors, notes } = resolveBeats(
+    [
+      { mark: "nope", at: "a" }, // no such mark in the capture
+      { mark: "early", at: "ghost" }, // no such narration line
+      { mark: "m", at: "a" },
+    ],
+    [{ label: "m", ts: 11 }],
+    segments,
+    0,
+    10_600,
+    SPAN,
+  );
+  assert.equal(anchors.length, 3); // start, m, end
+  assert.match(notes.join("\n"), /beat "nope": the capture has no such mark/);
+  assert.match(notes.join("\n"), /beat "early": unknown narration "ghost"/);
+});
+
+test("resolveBeats: a beat that would run the film backwards is dropped and reported", () => {
+  const segments = [SEG("a", 600, 10_000)];
+  const { anchors, notes } = resolveBeats(
+    [
+      { mark: "x", into: "a", fraction: 0.8 }, // later in the film …
+      { mark: "y", at: "a" }, // … but earlier in the film, while later in the capture
+    ],
+    [
+      { label: "x", ts: 11 },
+      { label: "y", ts: 12 },
+    ],
+    segments,
+    0,
+    10_600,
+    SPAN,
+  );
+  assert.deepEqual(anchors.map((a) => a.mark), ["start", "x", "end"]);
+  assert.match(notes.join("\n"), /beat "y": would run the film backwards/);
+});
+
+test("resolveBeats: marks outside the capture are clamped, film times stay inside the shot", () => {
+  const { anchors } = resolveBeats([{ mark: "m", at: "a", minus: 5 }], [{ label: "m", ts: 9.0 }], [SEG("a", 0, 10_000)], 0, 10_000, SPAN);
+  assert.deepEqual(anchors.map((a) => [a.src, a.out]), [[SPAN.t0, 0], [SPAN.t0, 0], [SPAN.tEnd, 10_000]]);
+});
+
+test("sourceTimeAtBeats / sampleFrames with anchors: the action follows the words, the wait is cut", () => {
+  // 6 frames over 6 s: 0,1,2 | 3 (result) | 4,5 (hold). Output 12 s, 120 frames.
+  const frames = Array.from({ length: 6 }, (_, i) => ({ file: `f${i}.jpg`, ts: S + i }));
+  const span = captureSpan(frames); // t0 = S s, tEnd = S+5.2 s
+  const anchors = [
+    { mark: "start", src: span.t0, out: 0 },
+    { mark: "click", src: (S + 2) * 1000, out: 6_000 }, // typing (2 s) fills the first 6 s of narration
+    { mark: "result", src: (S + 3) * 1000, out: 6_400 }, // the 1 s wait is cut to 0.4 s
+    { mark: "end", src: span.tEnd, out: 12_000 },
+  ];
+  assert.equal(sourceTimeAtBeats(3_000, anchors), (S + 1) * 1000); // mid of the typing phase
+  assert.equal(sourceTimeAtBeats(6_200, anchors), (S + 2.5) * 1000); // inside the cut wait
+  const out = sampleFrames(frames, 120, { outDurMs: 12_000, maxStretch: 3, anchors });
+  assert.equal(out.length, 120);
+  const first = Object.fromEntries([...new Set(out)].map((f) => [f, out.indexOf(f)]));
+  assert.equal(first["f0.jpg"], 0);
+  assert.equal(first["f1.jpg"], 30); // typing: 2 captured seconds spread over the 6 s dictated line (3×)
+  assert.ok(first["f2.jpg"] >= 58 && first["f2.jpg"] <= 61, `the click lands at 6.0 s (first at ${first["f2.jpg"]})`);
+  assert.ok(first["f3.jpg"] >= 62 && first["f3.jpg"] <= 66, `the result lands right after 6.4 s (at ${first["f3.jpg"]})`);
+  assert.equal(out[119], "f5.jpg");
+  for (let i = 1; i < out.length; i++) assert.ok(out[i] >= out[i - 1]); // never backwards
 });
 
 test("buildTimeline: cut-ins and alternates are the caller's business — unknown VO ids are an error", () => {
