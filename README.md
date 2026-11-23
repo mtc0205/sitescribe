@@ -56,6 +56,7 @@ Open the printed URL in **Chrome 139+**, enable `chrome://flags/#prompt-api-for-
 What you get in demo mode:
 
 - Everything is stored locally; **the on-device path is real** if Chrome has the model, cloud calls fail honestly because no project is configured.
+- **The first click never waits for the model.** On a browser without Gemini Nano, the first **⚡ Capture** starts Chrome's background download (progress appears in the status chip) and the note is structured right away — by cloud Gemini once a project is wired up, here by the labelled rule-based fallback. Each answer's badge says which one ran; later captures switch to on-device once the model is ready.
 - The **status bar** always states which engine is on duty — `⚡ On-device ready`, `☁ Cloud engine · on-device optional`, or `⚙ Rule-based structuring` — and after each request shows the badge of the engine that answered.
 - Offline demo: DevTools → Network → **Offline**, then capture a record; with the model installed the badge stays green ⚡ and the record is marked *pending sync*. **↻ Back in range** flips it to *synced* (in demo mode this is a simulation of the server acknowledgement).
 - The home screen's **Engine & diagnostics** section (collapsed by default) shows live telemetry — runtime mode, Prompt API exposure, on-device model availability — and the engine log once there are events.
