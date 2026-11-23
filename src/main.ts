@@ -17,8 +17,11 @@ let deviceWarmed = false;
 /** Chrome's answer for the on-device model; "unknown" until the first probe resolves. */
 type DeviceState = "unknown" | "available" | "downloadable" | "downloading" | "unavailable" | "no-api";
 let deviceState: DeviceState = "unknown";
-/** Most recent engine event of this session (null until one happens). */
+/** Most recent engine event of this session (null until one happens). Download
+ *  progress ticks are kept apart: they must not drown out the badge of the last
+ *  answer while the model is still being fetched in the background. */
 let lastEngineBadge: EngineBadgeInfo | null = null;
+let downloadBadge: EngineBadgeInfo | null = null;
 
 /** A real cloud backend is configured (a Firebase project, not the emulators). */
 function cloudConfigured(): boolean {
@@ -54,11 +57,12 @@ function badgeHtml(badge: EngineBadgeInfo): string {
 /** Status chip for the top bar. Before any engine event it states, neutrally and truthfully,
  *  which engine is on duty — never "…" and never an error-looking "unavailable". */
 function engineChipHtml(): string {
+  const current = lastEngineBadge ?? downloadBadge;
   let cls: string;
   let text: string;
-  if (lastEngineBadge) {
-    cls = chipClassFor(lastEngineBadge);
-    text = `${iconFor(lastEngineBadge)} ${lastEngineBadge.short ?? lastEngineBadge.label}`;
+  if (current) {
+    cls = chipClassFor(current);
+    text = `${iconFor(current)} ${current.short ?? current.label}`;
   } else if (deviceState === "available") {
     cls = "chip device";
     text = "⚡ On-device ready";
@@ -69,8 +73,8 @@ function engineChipHtml(): string {
     cls = "chip neutral";
     text = "⚙ Rule-based structuring";
   }
-  const title = lastEngineBadge
-    ? `Last engine event: ${lastEngineBadge.label}. Every answer and record carries its own badge.`
+  const title = current
+    ? `Last engine event: ${current.label}. Every answer and record carries its own badge.`
     : "Which engine is on duty. Every answer and record carries its own badge.";
   return `<span id="engine-chip" class="engine-chip ${cls}" data-testid="engine-chip" title="${escapeHtml(title)}">${escapeHtml(text)}</span>`;
 }
@@ -219,13 +223,8 @@ async function probeDevice(): Promise<void> {
         : "no-api";
 
   // Engine chip (only while no engine event has happened yet).
-  if (!lastEngineBadge) updateEngineChip();
-
-  // Live note under the on-device badge in the legend — phrased neutrally.
-  const note = document.querySelector("#note-device");
-  if (note) note.textContent = deviceNote();
-
-  renderDiagSummary();
+  if (!lastEngineBadge && !downloadBadge) updateEngineChip();
+  updateDeviceUi();
 
   // Raw telemetry facts (kept verbatim — this is the diagnostics view).
   const facts = document.querySelector("#engine-facts");
@@ -252,6 +251,19 @@ function renderDiagSummary(): void {
   summary.textContent = `${diagSummary()}${sim !== "off" ? ` · simulation: ${sim}` : ""}${n ? ` · ${n} engine event${n === 1 ? "" : "s"}` : ""}`;
 }
 
+/** The two places that describe the on-device model in words: the legend note on
+ *  the home screen and the collapsed diagnostics summary. */
+function updateDeviceUi(): void {
+  const note = document.querySelector("#note-device");
+  if (note) note.textContent = deviceNote();
+  renderDiagSummary();
+}
+
+function downloadPct(): string {
+  const p = downloadBadge?.downloadProgress;
+  return p == null ? "…" : `${Math.round(p * 100)}%`;
+}
+
 function deviceNote(): string {
   switch (deviceState) {
     case "available":
@@ -259,7 +271,7 @@ function deviceNote(): string {
     case "downloadable":
       return "Optional — Chrome downloads the model on first use.";
     case "downloading":
-      return "Downloading…";
+      return `Downloading the on-device model · ${downloadPct()} — ${cloudConfigured() ? "the cloud engine answers until it is ready" : "notes are structured by the rule-based fallback until it is ready"}.`;
     case "no-api":
       return cloudConfigured() ? "Not supported in this browser — the cloud engine answers instead." : "Not supported in this browser — notes are structured by the rule-based fallback.";
     default:
@@ -273,6 +285,8 @@ function diagSummary(): string {
       return "on-device model ready";
     case "downloadable":
       return "on-device model optional (downloads on first use)";
+    case "downloading":
+      return `on-device model downloading · ${downloadPct()}`;
     case "no-api":
       return "on-device model not supported in this browser";
     default:
@@ -388,14 +402,31 @@ function renderSession(): void {
 
 async function ensureWarm(): Promise<void> {
   if (deviceWarmed) return;
-  deviceWarmed = true; // only try once per session; badge shows download progress
+  deviceWarmed = true; // only try once per session
+  let availability: string | null = null;
   try {
-    await warmDeviceModel();
-    // Ask Chrome again rather than assume the warm-up installed anything.
-    void probeDevice();
-  } catch (e) {
-    console.warn("[ai] device model warm-up failed:", e);
+    availability = await deviceAvailability();
+  } catch {
+    availability = null;
   }
+  if (availability === "available") {
+    // Installed: load the weights now so this very capture is served on-device.
+    try {
+      await warmDeviceModel();
+    } catch (e) {
+      console.warn("[ai] device model warm-up failed:", e);
+    }
+  } else {
+    // Not installed: start Chrome's download under this user gesture, but do
+    // NOT hold the capture hostage to it. Until 2026-11-24 the first capture
+    // waited for the whole multi-GB download with nothing on screen but a
+    // progress chip (measured: 25 s and 33 % on a fast line, no record yet).
+    // The SDK uses the cloud (or the labelled fallback) until the model is
+    // ready, and the badge on each answer keeps saying which one ran.
+    void warmDeviceModel().catch((e: unknown) => console.warn("[ai] device model warm-up failed:", e));
+  }
+  // Ask Chrome again rather than assume the warm-up installed anything.
+  void probeDevice();
 }
 
 function asSeverity(s: string): DefectRecord["severity"] {
@@ -583,9 +614,17 @@ onStoreChange(() => {
 });
 
 onEngineUpdate((badge) => {
-  lastEngineBadge = badge;
-  if (badge.engine === "download") deviceState = "downloading";
+  if (badge.engine === "download") {
+    // Background download: remember the latest tick, never replace the badge of
+    // the last answer with it, and never fill the status bar with progress.
+    downloadBadge = badge;
+    deviceState = "downloading";
+  } else {
+    lastEngineBadge = badge;
+    downloadBadge = null;
+  }
   updateEngineChip();
+  updateDeviceUi();
   refreshEngineLog();
 });
 

@@ -77,7 +77,11 @@ export function getEngineLog(): readonly EngineLogEntry[] {
   return engineLog;
 }
 function emitEngine(badge: EngineBadgeInfo, feature = "system") {
-  engineLog.unshift({ ts: new Date().toISOString(), feature, badge });
+  const entry: EngineLogEntry = { ts: new Date().toISOString(), feature, badge };
+  // Download progress ticks every second or so: keep ONE rolling entry for the
+  // download instead of flooding the log (50 ticks would hide every real event).
+  if (badge.engine === "download" && engineLog[0]?.badge.engine === "download") engineLog[0] = entry;
+  else engineLog.unshift(entry);
   if (engineLog.length > 50) engineLog.length = 50;
   engineListeners.forEach((fn) => fn(badge));
 }
