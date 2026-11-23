@@ -139,7 +139,7 @@ function renderHome(): void {
         <div class="home-col">
           <section class="hero">
             <h1>Field inspections in dead zones,<br/><em>still structured.</em></h1>
-            <p>Dictate defects under the deck, inside the tunnel, up the valley. Gemini Nano runs <strong>on your device</strong> — no signal needed, nothing leaves it. Cloud Gemini drafts the report when you're back in range.</p>
+            <p>Capture defects under the deck, inside the tunnel, up the valley. Gemini Nano runs <strong>on your device</strong> — no signal needed, nothing leaves it. Cloud Gemini drafts the report when you're back in range.</p>
             <div class="hero-cta"><button id="cta-open" class="primary">Open today's inspection →</button></div>
           </section>
           <section class="panel" id="projects">
@@ -357,7 +357,7 @@ function renderSession(): void {
 
       <section class="panel" id="capture">
         <div class="panel-head"><h2>Capture defect</h2><span class="hint">on-device first · works offline</span></div>
-        <textarea id="note" rows="3" placeholder="Speak or type like you'd talk: “Longitudinal crack on web of girder G2, about 2 mm wide, 3 m long, seepage with white efflorescence nearby.”"></textarea>
+        <textarea id="note" rows="3" placeholder="Type it like you'd talk: “Longitudinal crack on web of girder G2, about 2 mm wide, 3 m long, seepage with white efflorescence nearby.”"></textarea>
         <div class="row">
           <button id="capture-btn" class="primary">⚡ Capture</button>
           <span id="capture-state" class="muted" aria-live="polite"></span>

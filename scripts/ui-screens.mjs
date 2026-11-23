@@ -222,7 +222,14 @@ for (const [w, h] of SIZES) {
     await p.type("#note", NOTE);
     await p.click("#capture-btn");
     await p.waitForSelector("#capture-result .ai-block", { timeout: 60_000 });
-    await p.evaluate(() => document.querySelector("#capture-result")?.scrollIntoView({ block: "center" }));
+    // Top-aligned when the whole structured record fits in the first screen (so the project
+    // title is not left half-hidden under the sticky top bar); otherwise centre it as before.
+    await p.evaluate(() => {
+      const el = document.querySelector("#capture-result");
+      if (!el) return;
+      window.scrollTo(0, 0);
+      if (el.getBoundingClientRect().bottom > window.innerHeight - 8) el.scrollIntoView({ block: "center" });
+    });
     const st = await p.evaluate(() => ({
       badge: document.querySelector("#capture-result .ai-head .chip")?.textContent ?? null,
       sync: document.querySelector("#record-list .record .chip.pending, #record-list .record .chip.online")?.textContent ?? null,

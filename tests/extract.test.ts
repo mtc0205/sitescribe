@@ -5,6 +5,8 @@ import { ruleBasedStructure, ruleBasedCrossCheck, repairJson } from "../src/extr
 test("ruleBasedStructure recognises defect vocabulary", () => {
   const cases: [string, string][] = [
     ["Longitudinal crack on web of girder G2, about 2 mm wide", "longitudinal crack"],
+    ["Longitudinal crack on web of girder G2, about 2 mm wide, 3 m long, seepage with white efflorescence nearby", "longitudinal crack"],
+    ["White efflorescence beside a hairline crack", "efflorescence"],
     ["Hairline transverse crack near support, 0.1 mm", "transverse crack"],
     ["White efflorescence deposit near the pier base", "efflorescence"],
     ["Active water seepage on the wall", "seepage"],

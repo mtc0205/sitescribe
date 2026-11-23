@@ -31,7 +31,18 @@ export function ruleBasedStructure(note: string): DefectJson {
     [/deflection|sag/, "excessive deflection"],
     [/settlement/, "settlement"],
   ];
-  const defectType = defectVocab.find(([re]) => re.test(n))?.[1] ?? "unclassified observation";
+  // The primary defect is the one the inspector mentions first. Ties keep the
+  // more specific entry, because the vocabulary lists it before its generic form
+  // ("longitudinal crack" before "crack").
+  let defectType = "unclassified observation";
+  let firstAt = Infinity;
+  for (const [re, label] of defectVocab) {
+    const at = n.search(re);
+    if (at !== -1 && at < firstAt) {
+      firstAt = at;
+      defectType = label;
+    }
+  }
   const qty = (note.match(/~?\d+(\.\d+)?\s*(mm|cm|m|sq\.?m|m2)\b/gi) ?? []).join(", ") || "not stated";
   const comp = (note.match(/(?:on|near|at|of)\s+(?:the\s+)?(?:web of\s+)?(girder \w+|deck slab\w*|pier \w+|abutment\w*|bearing\w*|girder \w+|slab\w*|wall\w*|segment \w+)/i) ?? [])[1] ?? "unspecified component";
   let severity: DefectJson["severity"] = "unknown";
