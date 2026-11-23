@@ -186,7 +186,9 @@ console.log(`
          reCAPTCHA v3 (create the site key when prompted; no billing),
          copy the SITE key into .env as VITE_RECAPTCHA_SITE_KEY=…
       b) Debug token (explicitly accepted by the hackathon rules):
-         run \`npm run dev\` locally, open http://127.0.0.1:5173, copy the
+         run \`npm run dev\` locally, open the URL vite prints
+         (http://127.0.0.1:5173 — if another project holds that port, vite
+         moves to the next free one and the page must say "SiteScribe"), copy the
          "AppCheck debug token: …" line from the browser console, register
          it (App Check → Apps → ⋮ → Manage debug tokens), paste it into
          .env as VITE_APPCHECK_DEBUG_TOKEN=…
