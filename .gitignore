@@ -1,6 +1,9 @@
 node_modules/
 dist/
+# Secrets never enter git: the Firebase config and App Check keys live in .env
+# (written by scripts/firebase-bootstrap.mjs). Only the template is tracked.
 .env
-.env.local
+.env.*
+!.env.example
 *.log
 .DS_Store

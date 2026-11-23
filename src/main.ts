@@ -196,6 +196,9 @@ function renderHome(): void {
       </footer>
     </main>`;
   void refreshProjects();
+  // The engine log is this session's event history: it lives in the ai module,
+  // not in the DOM, so rebuild it whenever the home view is re-created.
+  refreshEngineLog();
   void probeDevice();
   document.querySelector("#new-project")!.addEventListener("click", onNewProject);
   document.querySelector("#cta-open")?.addEventListener("click", () => {
