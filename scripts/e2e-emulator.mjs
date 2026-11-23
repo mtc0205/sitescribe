@@ -137,12 +137,13 @@ emu.stderr.pipe(emuLog);
 const emuExit = new Promise((res) => emu.on("exit", res));
 
 let browser = null;
+let EMU_PROFILE = ""; // the profile this run creates — removed again in the finally block
 try {
   await poll(() => portOpen(9099) && portOpen(8080) && portOpen(5000), { timeoutMs: 420_000, intervalMs: 2000, label: "emulator ports" });
   console.log("[e2e-emulator] emulators up");
 
   /* ---------- 1. app loads, anonymous sign-in ---------- */
-  const EMU_PROFILE = path.join(os.tmpdir(), `ss-emu-profile-${Date.now()}`);
+  EMU_PROFILE = path.join(os.tmpdir(), `ss-emu-profile-${Date.now()}`);
   browser = await puppeteer.launch({
     executablePath: CHROME,
     headless: true,
@@ -297,7 +298,7 @@ try {
 } finally {
   if (browser) await browser.close().catch(() => {});
   // Only the profile this run created (see EMU_PROFILE) — nothing else is touched.
-  if (typeof EMU_PROFILE === "string") {
+  if (EMU_PROFILE) {
     await sleep(500);
     try {
       fs.rmSync(EMU_PROFILE, { recursive: true, force: true });
