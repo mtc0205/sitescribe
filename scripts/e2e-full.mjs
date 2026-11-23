@@ -7,10 +7,17 @@
  *  e2e-14  F3 report while offline         ("needs a connection")
  *  e2e-15  back in range → sync            (all pending → synced)
  * Asserts the full loop; exits non-zero on any failure.
+ *
+ * Base URL: --url <base> or --port <n> (default http://127.0.0.1:5173, the
+ * `npm run dev` port). The script refuses to run (exit 2) against a server
+ * that is not SiteScribe — e.g. when the default port is taken by another
+ * project: `npm run dev -- --port 5187 --strictPort` + `--port 5187`.
  */
 import puppeteer from "puppeteer-core";
+import { resolveBaseUrl, ensureServesSiteScribe } from "./lib/base-url.mjs";
 
 const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+const URL_BASE = resolveBaseUrl();
 const PROFILE = "C:\\Users\\user\\AppData\\Local\\Temp\\ss-e2e-full-profile";
 const SHOTS = "C:\\Users\\user\\Downloads\\盒盒\\contests\\2026-11-20-firebase-buildhybridai\\tools";
 
@@ -23,6 +30,9 @@ function check(name, ok, detail = "") {
   console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? " — " + detail : ""}`);
 }
 
+await ensureServesSiteScribe(URL_BASE);
+console.log(`[e2e-full] base URL ${URL_BASE}`);
+
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: false,
@@ -32,7 +42,7 @@ const browser = await puppeteer.launch({
 });
 
 const page = await browser.newPage();
-await page.goto("http://127.0.0.1:5173/?engine=off", { waitUntil: "load", timeout: 30000 });
+await page.goto(URL_BASE + "/?engine=off", { waitUntil: "load", timeout: 30000 });
 await new Promise((r) => setTimeout(r, 2000));
 
 // enter seeded project

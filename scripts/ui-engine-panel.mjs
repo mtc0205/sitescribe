@@ -5,12 +5,17 @@
  *  3. ?engine=off + CDP offline → capture → rule-based badge (dual-fail state)
  * Screenshots to tools/e2e-7-engine-panel.png / e2e-8-sim-fallback.png /
  * e2e-9-dual-fail-rulebased.png. Uses its own profile.
+ * Base URL: --url / --port (default http://127.0.0.1:5173 — see lib/base-url.mjs).
  */
 import puppeteer from "puppeteer-core";
+import { resolveBaseUrl, ensureServesSiteScribe } from "./lib/base-url.mjs";
 
 const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const PROFILE = "C:\\Users\\user\\AppData\\Local\\Temp\\ss-smoke-profile";
 const SHOTS = "C:\\Users\\user\\Downloads\\盒盒\\contests\\2026-11-20-firebase-buildhybridai\\tools";
+const URL_BASE = resolveBaseUrl();
+
+await ensureServesSiteScribe(URL_BASE);
 
 const browser = await puppeteer.launch({
   executablePath: CHROME,
@@ -31,7 +36,7 @@ async function state(page) {
 
 // --- 1. home with simulation=fallback ---
 const page = await browser.newPage();
-await page.goto("http://127.0.0.1:5173/?engine=sim_fallback", { waitUntil: "load", timeout: 30000 });
+await page.goto(URL_BASE + "/?engine=sim_fallback", { waitUntil: "load", timeout: 30000 });
 await new Promise((r) => setTimeout(r, 2500));
 const s1 = await state(page);
 console.log("[1 home sim_fallback]", JSON.stringify(s1, null, 2));
@@ -53,7 +58,7 @@ console.log("[2 capture simulated]", JSON.stringify(s2, null, 2));
 await page.screenshot({ path: SHOTS + "\\e2e-8-sim-fallback.png" });
 
 // --- 3. engine=off + offline → dual-fail rule-based ---
-await page.goto("http://127.0.0.1:5173/?engine=off", { waitUntil: "load" });
+await page.goto(URL_BASE + "/?engine=off", { waitUntil: "load" });
 await new Promise((r) => setTimeout(r, 1500));
 await page.click(".card");
 await new Promise((r) => setTimeout(r, 800));

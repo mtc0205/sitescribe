@@ -3,17 +3,21 @@
  * Captures every screen at 1280x800 and 390x844 (demo mode, engine=off,
  * honest badges) into ../tools/ui-*.png for critique.
  *
- * Usage: node scripts/ui-screens.mjs  (expects `npm run dev` on 127.0.0.1:5173)
+ * Usage: node scripts/ui-screens.mjs  (expects `npm run dev`; default port 5173,
+ *        override with --port <n> / --url <base> when that port is busy)
  */
 import puppeteer from "puppeteer-core";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveBaseUrl, ensureServesSiteScribe } from "./lib/base-url.mjs";
 
 const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SHOTS = path.resolve(ROOT, "..", "tools");
-const URL_BASE = "http://127.0.0.1:5173/?engine=off";
+const URL_BASE = resolveBaseUrl() + "/?engine=off";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+await ensureServesSiteScribe(resolveBaseUrl());
 
 const browser = await puppeteer.launch({
   executablePath: CHROME,

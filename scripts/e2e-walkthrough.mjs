@@ -7,10 +7,14 @@
  * Screenshots at each step.
  */
 import puppeteer from "puppeteer-core";
+import { resolveBaseUrl, ensureServesSiteScribe } from "./lib/base-url.mjs";
 
 const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const PROFILE = "C:\\Users\\user\\AppData\\Local\\Temp\\ss-e2e-profile";
 const SHOTS = "C:\\Users\\user\\Downloads\\盒盒\\contests\\2026-11-20-firebase-buildhybridai\\tools";
+const URL_BASE = resolveBaseUrl(); // --url / --port, default http://127.0.0.1:5173
+
+await ensureServesSiteScribe(URL_BASE);
 
 const NOTE_ONLINE = "Longitudinal crack on web of girder G2, about two millimeters wide, three meters long, water seepage with white efflorescence nearby.";
 const NOTE_OFFLINE = "Hairline transverse crack near support S2-1, barely visible, no seepage, maybe 0.1 mm.";
@@ -24,7 +28,7 @@ const browser = await puppeteer.launch({
 });
 
 const page = await browser.newPage();
-await page.goto("http://127.0.0.1:5173/", { waitUntil: "load", timeout: 30000 });
+await page.goto(URL_BASE + "/", { waitUntil: "load", timeout: 30000 });
 await new Promise((r) => setTimeout(r, 2000));
 await page.screenshot({ path: SHOTS + "\\e2e-1-home.png" });
 

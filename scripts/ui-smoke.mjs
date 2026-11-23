@@ -1,8 +1,12 @@
 /** UI smoke test: console errors + DOM presence + screenshot. */
 import puppeteer from "puppeteer-core";
+import { resolveBaseUrl, ensureServesSiteScribe } from "./lib/base-url.mjs";
 
 const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const PROFILE = "C:\\Users\\user\\AppData\\Local\\Temp\\ss-ui-profile";
+const URL_BASE = resolveBaseUrl(); // --url / --port, default http://127.0.0.1:5173
+
+await ensureServesSiteScribe(URL_BASE);
 
 const browser = await puppeteer.launch({
   executablePath: CHROME,
@@ -17,7 +21,7 @@ const errors = [];
 page.on("console", (m) => { if (m.type() === "error" || m.type() === "warning") errors.push(`[${m.type()}] ${m.text().slice(0, 300)}`); });
 page.on("pageerror", (e) => errors.push(`[pageerror] ${String(e).slice(0, 400)}`));
 
-await page.goto("http://127.0.0.1:5173/", { waitUntil: "networkidle0", timeout: 30000 }).catch((e) => errors.push("[goto] " + String(e)));
+await page.goto(URL_BASE + "/", { waitUntil: "networkidle0", timeout: 30000 }).catch((e) => errors.push("[goto] " + String(e)));
 await new Promise((r) => setTimeout(r, 3000));
 
 const state = await page.evaluate(() => ({
