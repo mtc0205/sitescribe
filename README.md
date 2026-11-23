@@ -75,6 +75,7 @@ Last run on 2026-11-24 (Windows, Chrome 158, Node 24) against this exact tree:
 | `node scripts/e2e-emulator.mjs` | the **real Firebase SDK** chain (Auth, Firestore, Remote Config) against the local Emulator Suite: anonymous sign-in, offline write not on the server → arrives after reconnect, rules reject cross-user access (403), PWA shell renders after an offline reload | 19 / 19 |
 | `node scripts/e2e-ondevice.mjs` | **real Gemini Nano on-device**, network cut (any fetch fails): the capture and Q&A badges come from `inferenceSource === "on_device"` | 2 / 2 |
 | `node scripts/ui-screens.mjs` | WCAG contrast of every text/background pair, computed from real styles (all ≥ 4.5:1, minimum 5.7:1), plus a first-screen audit | exit 0 |
+| clean checkout → `npm ci` → `check` / `test` / `build` → `npm run dev` | the quick-start needs nothing but this repository | install ok · 0 errors · 63 pass + 1 skipped (it reads the video script, which lives next to the repo) · build ok · app served |
 
 Nothing on the on-device path can fake a pass: `e2e-ondevice.mjs` accepts only a genuine on-device badge and exits 2 (`tools/ondevice-proof.json` → `model-not-available`) when the model is absent.
 

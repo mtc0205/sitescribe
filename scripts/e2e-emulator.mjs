@@ -142,10 +142,11 @@ try {
   console.log("[e2e-emulator] emulators up");
 
   /* ---------- 1. app loads, anonymous sign-in ---------- */
+  const EMU_PROFILE = path.join(os.tmpdir(), `ss-emu-profile-${Date.now()}`);
   browser = await puppeteer.launch({
     executablePath: CHROME,
     headless: true,
-    userDataDir: path.join(os.tmpdir(), `ss-emu-profile-${Date.now()}`),
+    userDataDir: EMU_PROFILE, // fresh every run; removed in the finally block
     args: ["--no-first-run", "--no-default-browser-check"],
   });
   const page = await browser.newPage();
@@ -295,6 +296,15 @@ try {
   check("e2e-emulator ran to completion", false, String(e));
 } finally {
   if (browser) await browser.close().catch(() => {});
+  // Only the profile this run created (see EMU_PROFILE) — nothing else is touched.
+  if (typeof EMU_PROFILE === "string") {
+    await sleep(500);
+    try {
+      fs.rmSync(EMU_PROFILE, { recursive: true, force: true });
+    } catch {
+      console.log("[e2e-emulator] could not remove the temporary browser profile " + EMU_PROFILE);
+    }
+  }
   if (KEEP) {
     console.log("[e2e-emulator] --keep: emulator suite left running (pid " + emu.pid + ")");
   } else {

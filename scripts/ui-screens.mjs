@@ -38,10 +38,11 @@ await ensureServesSiteScribe(BASE);
 fs.mkdirSync(SHOTS, { recursive: true });
 
 // Fresh profile every run: a first-time visitor's view (no accumulated records).
+const PROFILE_DIR = path.join(process.env.TEMP ?? ROOT, "ss-ui-profile-" + Date.now());
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: true,
-  userDataDir: path.join(process.env.TEMP ?? ROOT, "ss-ui-profile-" + Date.now()),
+  userDataDir: PROFILE_DIR, // removed again at the end of the script
   args: ["--no-first-run", "--no-default-browser-check", "--force-device-scale-factor=1"],
 });
 
@@ -234,6 +235,13 @@ for (const [w, h] of SIZES) {
 }
 
 await browser.close();
+// Remove only the profile this run created (see PROFILE_DIR).
+await sleep(500);
+try {
+  fs.rmSync(PROFILE_DIR, { recursive: true, force: true });
+} catch {
+  console.log(`[ui] could not remove the temporary browser profile ${PROFILE_DIR}`);
+}
 
 /* ---- contrast verdict ---- */
 const rows = audit.filter((r) => !r.missing);
