@@ -391,10 +391,8 @@ async function ensureWarm(): Promise<void> {
   deviceWarmed = true; // only try once per session; badge shows download progress
   try {
     await warmDeviceModel();
-    if (deviceState !== "available") {
-      deviceState = "available";
-      void probeDevice();
-    }
+    // Ask Chrome again rather than assume the warm-up installed anything.
+    void probeDevice();
   } catch (e) {
     console.warn("[ai] device model warm-up failed:", e);
   }

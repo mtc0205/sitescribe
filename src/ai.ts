@@ -205,12 +205,32 @@ export async function warmDeviceModel(): Promise<void> {
   // exactly one session alive between calls, so one tiny local inference is
   // what actually preloads it. Done only when the model is already installed —
   // a download is never started from here without the user's click.
-  if ((await deviceAvailability()) === "available") {
-    await model
-      .generateContent({ contents: [{ role: "user", parts: [{ type: "text", text: "Reply with the single word: ready." }] }] })
-      .catch((e: unknown) => console.warn("[ai] on-device preload inference failed:", e));
+  const availability = await deviceAvailability();
+  if (availability !== "available") {
+    // "ready" is never our word — only Chrome's. initializeDeviceModel()
+    // resolves without installing anything when the model cannot be used, and
+    // this used to announce "On-device model ready" regardless (seen in the
+    // engine log of a demo build with no model, 2026-11-24).
+    const downloading = availability === "downloadable" || availability === "downloading";
+    emitEngine({
+      engine: "unavailable",
+      label: downloading ? "On-device model still downloading" : "On-device model not available",
+      short: downloading ? "On-device model downloading" : "On-device model unavailable",
+    });
+    return;
   }
-  emitEngine({ engine: "pending", label: "On-device model ready" });
+  let preloaded = true;
+  await model
+    .generateContent({ contents: [{ role: "user", parts: [{ type: "text", text: "Reply with the single word: ready." }]}] })
+    .catch((e: unknown) => {
+      preloaded = false;
+      console.warn("[ai] on-device preload inference failed:", e);
+    });
+  emitEngine(
+    preloaded
+      ? { engine: "pending", label: "On-device model ready" }
+      : { engine: "pending", label: "On-device model available — the first request will load it", short: "On-device model loading" },
+  );
 }
 
 /**
