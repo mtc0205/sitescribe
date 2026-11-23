@@ -168,7 +168,12 @@ async function shotEnginePanel(page, rec, ctx) {
   await waitFor(page, "#engine-panel");
   await sleep(800);
   await rec.start();
+  // Since the 2026-11-24 polish the telemetry sits in a collapsed "Engine &
+  // diagnostics" section (the home screen now leads with the product), so open
+  // it on camera — the badge legend above it is always visible.
   await page.evaluate(() => document.querySelector("#engine-panel")?.scrollIntoView({ behavior: "smooth" }));
+  await sleep(900);
+  await page.click("#engine-panel > summary");
   await sleep(6000); // narration: act-3-how-it-s-built-1 (long)
   await rec.stop({ shot: "engine-panel", narration: "act-3-how-it-s-built-1.mp3, act-4-close-1.mp3" });
 }

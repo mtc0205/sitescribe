@@ -167,7 +167,9 @@ function requireModel(mode: (typeof InferenceMode)[keyof typeof InferenceMode]):
 function badgeFor(engine: "on_device" | "in_cloud", fellBack: boolean): EngineBadgeInfo {
   return engine === "on_device"
     ? { engine, fellBack, label: "On-device · Gemini Nano" }
-    : { engine, fellBack, label: "Cloud · Gemini" };
+    : fellBack
+      ? { engine, fellBack, label: "Fell back to cloud · Gemini" }
+      : { engine, fellBack, label: "Cloud · Gemini" };
 }
 
 let deviceBudgetedCalls = 0;
@@ -196,7 +198,7 @@ export async function aiBudgetMs(): Promise<number> {
 export async function warmDeviceModel(): Promise<void> {
   const model = requireModel(InferenceMode.PREFER_ON_DEVICE);
   await model.initializeDeviceModel((p) => {
-    emitEngine({ engine: "download", downloadProgress: p, label: `Downloading on-device model · ${Math.round(p * 100)}%` });
+    emitEngine({ engine: "download", downloadProgress: p, label: `Downloading on-device model · ${Math.round(p * 100)}%`, short: `Downloading model · ${Math.round(p * 100)}%` });
   });
   // `initializeDeviceModel` only (down)loads the component; it does not bring
   // the weights into memory. Chrome evicts an unused model and the SDK keeps
@@ -298,7 +300,7 @@ export async function structureNote(note: string): Promise<{ record: DefectJson;
     // (e.g. offline demo without a Firebase project). Structure the note with
     // transparent rules — the badge says so; we never pretend AI ran.
     console.warn("[ai] structuring failed, using rule-based fallback:", e);
-    const badge: EngineBadgeInfo = { engine: "unavailable", label: "Rule-based (no AI engine available)" };
+    const badge: EngineBadgeInfo = { engine: "unavailable", label: "Rule-based fallback (no AI engine reachable)", short: "Rule-based fallback" };
     emitEngine(badge, "F1 structure");
     return { record: ruleBasedStructure(note), answer: { text: "", badge } };
   }
@@ -313,7 +315,7 @@ export async function askFieldQuestion(question: string): Promise<AiAnswer> {
   } catch (e) {
     // Honest degradation: offline with no device model → say so, never fake.
     console.warn("[ai] field QA failed:", e);
-    const badge: EngineBadgeInfo = { engine: "unavailable", label: "No engine reachable (offline, no device model)" };
+    const badge: EngineBadgeInfo = { engine: "unavailable", label: "No engine reachable (offline, no device model)", short: "No engine reachable" };
     emitEngine(badge, "F2 field QA");
     return {
       text: "Field Q&A needs either the on-device model or a connection — none was reachable. Defect capture still works: notes are structured by transparent rules and will sync later.",
@@ -325,7 +327,7 @@ export async function askFieldQuestion(question: string): Promise<AiAnswer> {
 /** F3 — report drafting. Cloud only by design (long aggregation, see SPEC §5). */
 export async function draftReport(records: DefectJson[]): Promise<AiAnswer> {
   if (!navigator.onLine) {
-    const badge: EngineBadgeInfo = { engine: "unavailable", label: "Report drafting needs a connection (cloud task)" };
+    const badge: EngineBadgeInfo = { engine: "unavailable", label: "Report drafting needs a connection (cloud task)", short: "Report needs a connection" };
     emitEngine(badge, "F3 report");
     return { text: "", badge };
   }
@@ -347,7 +349,7 @@ export async function crossCheckSeverity(record: DefectJson): Promise<AiAnswer> 
     return await ask(InferenceMode.PREFER_ON_DEVICE, q, { temperature: 0.2 }, true, "F4 severity check");
   } catch (e) {
     console.warn("[ai] severity check failed:", e);
-    const badge: EngineBadgeInfo = { engine: "unavailable", label: "Rule-based (no AI engine available)" };
+    const badge: EngineBadgeInfo = { engine: "unavailable", label: "Rule-based fallback (no AI engine reachable)", short: "Rule-based fallback" };
     emitEngine(badge, "F4 severity check");
     return { text: ruleBasedCrossCheck(record), badge };
   }

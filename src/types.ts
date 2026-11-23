@@ -12,7 +12,10 @@ export interface EngineBadgeInfo {
   fellBack?: boolean;
   /** Model download progress 0..1 when engine === "download". */
   downloadProgress?: number;
+  /** Full label — always what the answer itself shows. */
   label: string;
+  /** Compact wording for the status bar (same facts, fewer words). Falls back to `label`. */
+  short?: string;
 }
 
 /** A structured defect record extracted from free-text field notes. */

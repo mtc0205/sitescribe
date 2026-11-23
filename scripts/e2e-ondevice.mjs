@@ -189,7 +189,12 @@ try {
   proof.f2 = { ...f2, latencyMs: Date.now() - t2 };
   check("F2 badge is genuinely on-device", /on-device/i.test(f2?.badge ?? "") && !/simulated|rule-based|cloud/i.test(f2?.badge ?? ""), `"${f2?.badge}"`);
 
+  // Frame the evidence: the top of the session view (status bar + the
+  // structured record carrying the on-device badge), then the whole page.
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await sleep(400);
   await page.screenshot({ path: SHOT });
+  await page.screenshot({ path: SHOT.replace(/\.png$/, "-full.png"), fullPage: true });
   const failed = results.filter((r) => !r.ok);
   proof.status = failed.length ? "assertion-failed" : "on-device-proven";
   writeProof(proof);
