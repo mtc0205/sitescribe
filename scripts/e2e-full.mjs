@@ -311,10 +311,12 @@ const recordChip = (sel) => document.querySelector(sel + " [data-testid=record-e
 const SIM = /\(simulated\)/;
 
 const simPage = await openPage("?engine=sim_cloud");
-const simHome = { ...(await simPage.evaluate(bannerState, "main")), chip: await simPage.evaluate(engineChipOf) };
+/** Runs in the page: every chip naming a cloud engine — the legend's included — must carry the label. */
+const unlabelledCloudChips = () => [...document.querySelectorAll(".chip")].map((c) => c.textContent.replace(/\s+/g, " ").trim()).filter((t) => /cloud/i.test(t) && !/\(simulated\)/.test(t));
+const simHome = { ...(await simPage.evaluate(bannerState, "main")), chip: await simPage.evaluate(engineChipOf), unlabelled: await simPage.evaluate(unlabelledCloudChips), legend: await simPage.evaluate(() => [...document.querySelectorAll(".badge-gallery .chip")].map((c) => c.textContent.trim())) };
 check(
-  "sim_cloud · home: the banner is on screen and the status chip is labelled (simulated)",
-  simHome.present && simHome.onScreen && /Simulation is on/.test(simHome.text ?? "") && SIM.test(simHome.text ?? "") && SIM.test(simHome.chip ?? ""),
+  "sim_cloud · home: the banner is on screen, the status chip is labelled (simulated), and so is every cloud chip of the legend",
+  simHome.present && simHome.onScreen && /Simulation is on/.test(simHome.text ?? "") && SIM.test(simHome.text ?? "") && SIM.test(simHome.chip ?? "") && simHome.legend.includes("☁ Cloud · Gemini (simulated)") && simHome.legend.includes("↘ Fell back to cloud (simulated)") && simHome.unlabelled.length === 0,
   JSON.stringify(simHome),
 );
 await simPage.screenshot({ path: SHOTS + "\\e2e-18-sim-home.png" });

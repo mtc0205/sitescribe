@@ -157,6 +157,10 @@ const EXAMPLE_NOTE = "Longitudinal crack on web of girder G2, about 2 mm wide, 3
 
 function renderHome(): void {
   const example = ruleBasedStructure(EXAMPLE_NOTE);
+  // The legend explains the four real states. While the simulation is on, its two
+  // cloud chips carry the label as well, so no chip on the page names a cloud engine
+  // without saying "(simulated)".
+  const simTag = engineSimulation() === "off" ? "" : " (simulated)";
   app.innerHTML = `
     ${topbarHtml(`<div class="brand"><span class="logo">S</span> SiteScribe</div>`)}
     <main class="home">
@@ -199,8 +203,8 @@ function renderHome(): void {
         <h2 id="legend-title" class="legend-title">Every answer is badged with the engine that produced it</h2>
         <div class="badge-gallery">
           <div class="badge-cell"><span class="chip device">⚡ On-device · Gemini Nano</span><span class="badge-note" id="note-device">Gemini Nano on this device — works offline, nothing leaves it</span></div>
-          <div class="badge-cell"><span class="chip cloud">☁ Cloud · Gemini</span><span class="badge-note">report drafting, and capture where the on-device model isn't installed</span></div>
-          <div class="badge-cell"><span class="chip fallback">↘ Fell back to cloud</span><span class="badge-note">on-device was preferred but could not serve the request</span></div>
+          <div class="badge-cell"><span class="chip cloud">☁ Cloud · Gemini${simTag}</span><span class="badge-note">report drafting, and capture where the on-device model isn't installed</span></div>
+          <div class="badge-cell"><span class="chip fallback">↘ Fell back to cloud${simTag}</span><span class="badge-note">on-device was preferred but could not serve the request</span></div>
           <div class="badge-cell"><span class="chip neutral">⚙ Rule-based</span><span class="badge-note">no engine reachable — transparent keyword rules keep capture working</span></div>
         </div>
       </section>
