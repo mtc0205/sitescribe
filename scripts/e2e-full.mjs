@@ -99,15 +99,25 @@ check("status-bar engine chip is a neutral statement (not '…' / 'idle')", !!fr
 // ---- 0b. a connectivity change must not wipe a half-typed note ----
 const cdp = await page.createCDPSession();
 await cdp.send("Network.enable");
+/** Take the page out of coverage, or back into it. Chrome's offline emulation fails
+ *  simple requests at once but lets CORS preflights run: with the AI host unreachable
+ *  (2026-11-25) the SDK's cloud call hung for 84.5 s, and F2–F4, which have no budget,
+ *  stalled with it. A device out of coverage fails everything at once, so blocking the
+ *  AI host is what "offline" has to mean here. No assertion depends on how the request
+ *  fails — only on what the app does without an answer. */
+const AI_HOSTS = ["*googleapis.com*"];
+async function setCoverage(online) {
+  await cdp.send("Network.emulateNetworkConditions", online ? ONLINE : OFFLINE);
+  await cdp.send("Network.setBlockedURLs", { urls: online ? [] : AI_HOSTS });
+  await page.evaluate((on) => dispatchEvent(new Event(on ? "online" : "offline")), online);
+}
 await page.type("#note", "half-typed");
-await cdp.send("Network.emulateNetworkConditions", OFFLINE);
-await page.evaluate(() => dispatchEvent(new Event("offline")));
+await setCoverage(false);
 await sleep(600);
 const kept = await page.evaluate(() => ({ note: document.querySelector("#note").value, conn: document.querySelector(".topbar .chip.conn")?.textContent ?? null }));
 check("connectivity change keeps a half-typed note (no re-render)", kept.note === "half-typed" && /offline/i.test(kept.conn ?? ""), JSON.stringify(kept));
 // back in coverage for the online capture
-await cdp.send("Network.emulateNetworkConditions", ONLINE);
-await page.evaluate(() => dispatchEvent(new Event("online")));
+await setCoverage(true);
 await page.evaluate(() => { document.querySelector("#note").value = ""; });
 await sleep(600);
 
@@ -119,8 +129,7 @@ check("online capture is marked synced right away (demo mode)", /synced/i.test(o
 await page.screenshot({ path: SHOTS + "\\e2e-10-capture-online-rulebased.png" });
 
 // ---- 2. go offline, capture again ----
-await cdp.send("Network.emulateNetworkConditions", OFFLINE);
-await page.evaluate(() => dispatchEvent(new Event("offline")));
+await setCoverage(false);
 await sleep(600);
 const offline = await capture(NOTE_OFFLINE);
 check("offline capture completes", !!offline.record, offline.record ?? "");
@@ -177,8 +186,7 @@ const before = await page.evaluate(() => ({
   pending: document.querySelectorAll("#record-list .chip.pending").length,
   synced: document.querySelectorAll("#record-list .chip.online").length,
 }));
-await cdp.send("Network.emulateNetworkConditions", ONLINE);
-await page.evaluate(() => dispatchEvent(new Event("online")));
+await setCoverage(true);
 await sleep(800);
 await page.click("#sync-btn");
 await sleep(1500);
