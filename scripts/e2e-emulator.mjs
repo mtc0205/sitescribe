@@ -160,7 +160,11 @@ try {
   await page.setViewport({ width: 1280, height: 800 });
   page.on("pageerror", (e) => console.log("  [pageerror]", String(e).slice(0, 160)));
   await page.goto(APP_URL + "?engine=off", { waitUntil: "load", timeout: 30_000 });
-  await poll(() => page.evaluate(() => !!document.querySelector("#project-list .card")), { timeoutMs: 30_000, label: "seeded project card" });
+  // The first render comes only after the Remote Config fetch (and the Installations
+  // registration before it). With Google's endpoints reachable-but-blackholed both hung
+  // for 84.5 s on 2026-11-25 and the former 30 s bound gave up on a blank page; on a
+  // usual network the card is there within seconds. An upper bound, not an assertion.
+  await poll(() => page.evaluate(() => !!document.querySelector("#project-list .card")), { timeoutMs: 180_000, label: "seeded project card" });
 
   const runtimeChip = await page.evaluate(() => [...document.querySelectorAll(".topbar .chip")].map((c) => c.textContent).join(" | "));
   check("hosting emulator serves app", runtimeChip.length > 0, runtimeChip);
