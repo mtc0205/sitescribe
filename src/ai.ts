@@ -104,8 +104,11 @@ let simulation: SimulationKind = "off";
 export function setEngineSimulation(kind: SimulationKind): void {
   simulation = kind;
 }
+/** The cloud-state simulation in effect right now. The URL flag counts only in demo
+ *  mode (see isSimulated): in emulator and live mode nothing is simulated, so this
+ *  says "off" there whatever the URL asks for — and so does every label in the UI. */
 export function engineSimulation(): SimulationKind {
-  return simulation;
+  return isSimulated() ? simulation : "off";
 }
 
 /** Read `?engine=` from the URL (called once at boot). */

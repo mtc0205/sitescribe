@@ -17,6 +17,10 @@
  * and from the 2026-11-25 audit night:
  *  - the two F1 edge cases, with the SDK's cloud reply canned in (e2e-16/17):
  *    a reply that is not usable JSON, and a reply without `inferenceSource`
+ *  - simulation labelling (e2e-18…21): with ?engine=sim_cloud / sim_fallback every
+ *    chip, status line, record card and log row that reflects the simulated
+ *    engine says "(simulated)", the banner is on both views, and a real run
+ *    (?engine=off, fresh profile) shows none of it
  * Asserts the full loop; exits non-zero on any failure.
  *
  * Base URL: --url <base> or --port <n> (default http://127.0.0.1:5173, the
@@ -45,6 +49,15 @@ const results = [];
 function check(name, ok, detail = "") {
   results.push({ name, ok });
   console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? " — " + detail : ""}`);
+}
+/** Poll `fn` (runs in the page) every 500 ms until it returns a truthy value; resolves with the last value. */
+async function poll(pg, fn, { timeoutMs = 20000 } = {}) {
+  const t0 = Date.now();
+  for (;;) {
+    const v = await pg.evaluate(fn);
+    if (v || Date.now() - t0 > timeoutMs) return v ?? null;
+    await sleep(500);
+  }
 }
 
 await ensureServesSiteScribe(URL_BASE);
@@ -271,6 +284,169 @@ check(
   unnamed.stored?.extractedBy === "unknown" && unnamed.stored?.component === CANNED_RECORD.component && !/structured by rules/.test(unnamed.stored?.notes ?? ""),
   JSON.stringify(unnamed.stored),
 );
+
+// ---- 8. simulation labelling (SPEC §6.5; demo mode only) ----
+// ?engine=sim_cloud / sim_fallback answer locally with a labelled cloud badge.
+// Everything that reflects that engine must say "(simulated)" in its OWN text —
+// chips, status lines, record cards, the log — and the banner must be on both views.
+async function openPage(query) {
+  const p = await browser.newPage();
+  await p.goto(URL_BASE + "/" + query, { waitUntil: "load", timeout: 30000 });
+  await p.waitForSelector("#project-list .card", { timeout: 30000 });
+  await sleep(800);
+  return p;
+}
+/** Runs in the page: is the banner there (inside `scope`), and is it painted inside the viewport? */
+const bannerState = (scope) => {
+  const b = document.querySelector((scope ? scope + " " : "") + ".sim-banner");
+  if (!b) return { present: false };
+  const r = b.getBoundingClientRect();
+  return { present: true, onScreen: r.width > 0 && r.height > 0 && r.top >= 0 && r.bottom <= window.innerHeight, text: b.textContent.replace(/\s+/g, " ").trim() };
+};
+const engineChipOf = () => document.querySelector("#engine-chip")?.textContent ?? null;
+const recordChip = (sel) => document.querySelector(sel + " [data-testid=record-engine]")?.textContent ?? null;
+const SIM = /\(simulated\)/;
+
+const simPage = await openPage("?engine=sim_cloud");
+const simHome = { ...(await simPage.evaluate(bannerState, "main")), chip: await simPage.evaluate(engineChipOf) };
+check(
+  "sim_cloud · home: the banner is on screen and the status chip is labelled (simulated)",
+  simHome.present && simHome.onScreen && /Simulation is on/.test(simHome.text ?? "") && SIM.test(simHome.text ?? "") && SIM.test(simHome.chip ?? ""),
+  JSON.stringify(simHome),
+);
+await simPage.screenshot({ path: SHOTS + "\\e2e-18-sim-home.png" });
+
+await simPage.click("#project-list .card");
+await simPage.waitForSelector("#note");
+await sleep(400);
+const simSession = await simPage.evaluate(bannerState, "main.session");
+check("sim_cloud · inspection session: the banner is on this view too", simSession.present && simSession.onScreen, JSON.stringify(simSession));
+
+const simCap = await captureOn(simPage, NOTE_ONLINE);
+const simCapture = {
+  badge: simCap.badge,
+  preview: await simPage.evaluate(recordChip, "#capture-result"),
+  list: await simPage.evaluate(recordChip, "#record-list"),
+};
+// (The status chip is asserted after the Q&A below: on a browser without the on-device
+//  model the first click also runs the model warm-up, whose real "model unavailable /
+//  downloading" event may land on the chip after the first answer.)
+check(
+  "sim_cloud · capture: answer badge and both record cards (preview and list) say (simulated)",
+  /^☁ Cloud · Gemini \(simulated\)$/.test(simCapture.badge ?? "") && simCapture.preview === "☁ cloud (simulated)" && simCapture.list === "☁ cloud (simulated)",
+  JSON.stringify(simCapture),
+);
+
+// F4, F2 and F3 under the same simulation, so their chips are on the page too.
+await simPage.click("#record-list .record .check-btn");
+await poll(simPage, () => { const t = document.querySelector("#record-list .record .check-out")?.textContent ?? ""; return t && !/checking/.test(t); });
+await simPage.type("#qa-input", "What does efflorescence usually indicate?");
+await simPage.click("#qa-btn");
+await poll(simPage, () => document.querySelector("#qa-out .ai-head .chip")?.textContent ?? "");
+await simPage.click("#report-btn");
+await poll(simPage, () => document.querySelector("#report-out .ai-head .chip")?.textContent ?? "");
+const cloudChips = await simPage.evaluate(() => [...document.querySelectorAll(".chip")].map((c) => c.textContent.replace(/\s+/g, " ").trim()).filter((t) => /cloud/i.test(t)));
+// Six chips name the cloud engine by now (answer badge, two record cards, severity check,
+// Q&A, report) plus the status chip whenever it shows the latest answer rather than the
+// warm-up's real "model unavailable" line. All of them must carry the label.
+check(
+  "sim_cloud · every chip that names a cloud engine says (simulated) — severity check, Q&A, report and the status chip included",
+  cloudChips.length >= 6 && cloudChips.every((t) => SIM.test(t)),
+  JSON.stringify(cloudChips),
+);
+await simPage.screenshot({ path: SHOTS + "\\e2e-19-sim-session.png", fullPage: true });
+
+// The engine log lives on the home view.
+await simPage.click("#back");
+await simPage.waitForSelector("#engine-panel");
+await simPage.click("#engine-panel > summary");
+const simLog = await simPage.evaluate(() => ({
+  rows: [...document.querySelectorAll("#engine-log-list .log-row .chip")].map((c) => c.textContent.replace(/\s+/g, " ").trim()),
+  summary: document.querySelector("#engine-summary")?.textContent ?? null,
+  allRows: document.querySelectorAll("#engine-log-list .log-row").length,
+}));
+const cloudRows = simLog.rows.filter((t) => /cloud/i.test(t));
+check(
+  "sim_cloud · every cloud row of the engine log, and the diagnostics summary, say (simulated)",
+  cloudRows.length >= 4 && cloudRows.every((t) => SIM.test(t)) && SIM.test(simLog.summary ?? ""),
+  JSON.stringify({ cloudRows, summary: simLog.summary, allRows: simLog.allRows }),
+);
+await simPage.screenshot({ path: SHOTS + "\\e2e-20-sim-diagnostics.png" });
+
+// The label is stored with the record: it does not depend on the URL still being there.
+await simPage.reload({ waitUntil: "load", timeout: 30000 });
+await simPage.waitForSelector("#project-list .card", { timeout: 30000 });
+await simPage.click("#project-list .card");
+await simPage.waitForSelector("#record-list .record", { timeout: 15000 });
+const simStored = await simPage.evaluate(() => {
+  const flagged = JSON.parse(localStorage.getItem("sitescribe.v1") ?? "{}").records.filter((r) => r.simulated);
+  return {
+    flagged: flagged.map((r) => r.extractedBy),
+    listChips: [...document.querySelectorAll("#record-list [data-testid=record-engine]")].map((c) => c.textContent),
+  };
+});
+check(
+  "sim_cloud · the record is stored flagged `simulated` and still reads (simulated) after a reload",
+  simStored.flagged.length === 1 && simStored.flagged[0] === "in_cloud" && simStored.listChips.filter((t) => SIM.test(t)).length === 1 && simStored.listChips.includes("☁ cloud (simulated)"),
+  JSON.stringify(simStored),
+);
+
+// sim_fallback: the fell-back state, labelled the same way.
+const fbPage = await openPage("?engine=sim_fallback");
+await fbPage.click("#project-list .card");
+await fbPage.waitForSelector("#note");
+await sleep(400);
+const fbCap = await captureOn(fbPage, NOTE_OFFLINE);
+const fbList = await fbPage.evaluate(recordChip, "#record-list");
+check(
+  "sim_fallback · capture: the badge says Fell back to cloud · Gemini (simulated) and the record card says (simulated)",
+  /^☁ Fell back to cloud · Gemini \(simulated\)$/.test(fbCap.badge ?? "") && fbList === "☁ cloud (simulated)",
+  JSON.stringify({ badge: fbCap.badge, list: fbList }),
+);
+
+// Simulation off, same profile: the two records made under it keep their label; nothing else has one.
+await fbPage.goto(URL_BASE + "/?engine=off", { waitUntil: "load", timeout: 30000 });
+await fbPage.waitForSelector("#project-list .card", { timeout: 30000 });
+const offHome = await fbPage.evaluate(() => ({ banner: !!document.querySelector(".sim-banner"), simulated: /\(simulated\)/.test(document.body.innerText) }));
+await fbPage.click("#project-list .card");
+await fbPage.waitForSelector("#note");
+const real = await captureOn(fbPage, NOTE_ONLINE);
+const off = await fbPage.evaluate(() => ({
+  banner: !!document.querySelector(".sim-banner"),
+  chip: document.querySelector("#engine-chip")?.textContent ?? null,
+  newest: document.querySelector("#record-list .record [data-testid=record-engine]")?.textContent ?? null,
+  simulatedRecordChips: [...document.querySelectorAll("#record-list [data-testid=record-engine]")].filter((c) => /\(simulated\)/.test(c.textContent)).length,
+  simulatedLeaves: [...document.querySelectorAll("body *")].filter((el) => el.children.length === 0 && /\(simulated\)/.test(el.textContent ?? "")).length,
+}));
+check(
+  "simulation off · no banner on either view, nothing else labelled, and a new capture is a plain real record",
+  !offHome.banner && !offHome.simulated && !off.banner && !SIM.test(off.chip ?? "") && !SIM.test(real.badge ?? "") && off.newest === "⚙ rule-based",
+  JSON.stringify({ offHome, off, badge: real.badge }),
+);
+check("simulation off · only the two records made under the simulation still say (simulated)", off.simulatedRecordChips === 2 && off.simulatedLeaves === 2, JSON.stringify(off));
+await fbPage.screenshot({ path: SHOTS + "\\e2e-21-sim-off-real-run.png", fullPage: true });
+
+// A real run on a FRESH profile (incognito context: no stored record of any kind).
+const freshContext = await browser.createBrowserContext();
+try {
+  const fp = await freshContext.newPage();
+  await fp.goto(URL_BASE + "/?engine=off", { waitUntil: "load", timeout: 30000 });
+  await fp.waitForSelector("#project-list .card", { timeout: 30000 });
+  await sleep(1200); // let the device probe fill in the diagnostics facts
+  await fp.click("#engine-panel > summary");
+  const realHome = await fp.evaluate(() => ({
+    banner: !!document.querySelector(".sim-banner"),
+    simulated: /\(simulated\)/.test(document.body.innerText),
+    facts: [...document.querySelectorAll("#engine-facts .fact")].map((f) => f.textContent.replace(/\s+/g, " ").trim()),
+  }));
+  check(
+    "real run · fresh profile, ?engine=off: no banner, no (simulated) anywhere, diagnostics say simulation: off",
+    !realHome.banner && !realHome.simulated && realHome.facts.some((t) => /^simulation: off/.test(t)),
+    JSON.stringify(realHome),
+  );
+} finally {
+  await freshContext.close();
+}
 } catch (e) {
   check("e2e-full ran to completion", false, String(e));
 } finally {

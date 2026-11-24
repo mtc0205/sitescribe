@@ -39,6 +39,9 @@ export interface DefectRecord {
    *  unusable one — see src/engine.ts), or `"unknown"` (the model produced them but the
    *  SDK did not say which engine). */
   extractedBy: EngineKind | "rule_based" | "unknown";
+  /** Set on a record made under the demo's cloud-state simulation (SPEC §6.5): the engine
+   *  named in `extractedBy` never ran, so the record keeps its "(simulated)" label. */
+  simulated?: boolean;
   /** Pending cloud sync when captured offline (demo/local mode always true until "synced"). */
   syncState: "pending" | "synced";
 }

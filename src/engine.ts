@@ -44,14 +44,16 @@ export function recordEngine(badge: EngineBadgeInfo): DefectRecord["extractedBy"
   return "rule_based";
 }
 
-/** Text of the engine chip on a record card (SPEC §4.3). */
-export function recordEngineLabel(extractedBy: DefectRecord["extractedBy"]): string {
-  return (
+/** Text of the engine chip on a record card (SPEC §4.3). A record made under the demo's
+ *  cloud-state simulation says so for as long as it exists — the engine named in
+ *  `extractedBy` never ran — whether or not the simulation is still on. */
+export function recordEngineLabel(extractedBy: DefectRecord["extractedBy"], simulated = false): string {
+  const base =
     extractedBy === "on_device" ? "⚡ on-device" :
     extractedBy === "in_cloud" ? "☁ cloud" :
     extractedBy === "unknown" ? "⏳ engine unknown" :
-    "⚙ rule-based"
-  );
+    "⚙ rule-based";
+  return simulated && extractedBy !== "rule_based" ? `${base} (simulated)` : base;
 }
 
 /** What an F1 call produced from the engine's reply. */

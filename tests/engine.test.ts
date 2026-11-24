@@ -109,3 +109,11 @@ test("recordEngineLabel: one honest label per stored engine", () => {
   assert.equal(recordEngineLabel("rule_based"), "⚙ rule-based");
   assert.equal(recordEngineLabel("unknown"), "⏳ engine unknown");
 });
+
+test("recordEngineLabel: only a record made under the demo simulation says (simulated)", () => {
+  assert.equal(recordEngineLabel("in_cloud", true), "☁ cloud (simulated)");
+  for (const extractedBy of ["on_device", "in_cloud", "rule_based", "unknown"] as const) {
+    assert.doesNotMatch(recordEngineLabel(extractedBy), /simulated/i); // a real record never does
+  }
+  assert.doesNotMatch(recordEngineLabel("rule_based", true), /simulated/i); // its fields really are the rules'
+});

@@ -59,11 +59,17 @@ function badgeHtml(badge: EngineBadgeInfo): string {
  *  which engine is on duty — never "…" and never an error-looking "unavailable". */
 function engineChipHtml(): string {
   const current = lastEngineBadge ?? downloadBadge;
+  const sim = engineSimulation();
   let cls: string;
   let text: string;
   if (current) {
     cls = chipClassFor(current);
     text = `${iconFor(current)} ${current.short ?? current.label}`;
+  } else if (sim !== "off") {
+    // Simulation on (demo mode): every answer will be badged with this label,
+    // so the chip says it before the first one too — never "rule-based".
+    cls = sim === "cloud" ? "chip cloud" : "chip fallback";
+    text = sim === "cloud" ? "☁ Cloud · Gemini (simulated)" : "↘ Fell back to cloud · Gemini (simulated)";
   } else if (deviceState === "available") {
     cls = "chip device";
     text = "⚡ On-device ready";
@@ -123,6 +129,13 @@ function topbarHtml(left: string, opts: { narrow?: boolean } = {}): string {
   return `<header class="topbar"><div class="topbar-in${opts.narrow ? " session-bar" : ""}">${left}<div class="status">${connChipHtml()}${engineChipHtml()}<span class="chip runtime">${escapeHtml(runtimeLabel())}</span></div></div></header>`;
 }
 
+/** The cloud-state simulation banner (SPEC §6.5) — on BOTH views, so no screen can carry
+ *  a simulated badge without saying so. Rendered only while the simulation is in effect. */
+function simBannerHtml(): string {
+  if (engineSimulation() === "off") return "";
+  return `<div class="sim-banner" role="status" data-testid="sim-banner"><strong>Simulation is on.</strong> Cloud badge states on this page are simulated to demonstrate the UI — no cloud model is running, and every simulated badge says “(simulated)”. <a href="?engine=off">Turn simulation off</a></div>`;
+}
+
 /* ---------- home ---------- */
 
 /** The canonical example note — structured at render time by the real rule-based
@@ -130,12 +143,11 @@ function topbarHtml(left: string, opts: { narrow?: boolean } = {}): string {
 const EXAMPLE_NOTE = "Longitudinal crack on web of girder G2, about 2 mm wide, 3 m long.";
 
 function renderHome(): void {
-  const sim = engineSimulation();
   const example = ruleBasedStructure(EXAMPLE_NOTE);
   app.innerHTML = `
     ${topbarHtml(`<div class="brand"><span class="logo">S</span> SiteScribe</div>`)}
     <main class="home">
-      ${sim === "off" ? "" : `<div class="sim-banner" role="status"><strong>Simulation is on.</strong> Cloud badge states on this page are simulated to demonstrate the UI — no cloud model is running, and every simulated badge says “(simulated)”. <a href="?engine=off">Turn simulation off</a></div>`}
+      ${simBannerHtml()}
       <div class="home-grid">
         <div class="home-col">
           <section class="hero">
@@ -249,7 +261,7 @@ function renderDiagSummary(): void {
   if (!summary) return;
   const sim = engineSimulation();
   const n = getEngineLog().length;
-  summary.textContent = `${diagSummary()}${sim !== "off" ? ` · simulation: ${sim}` : ""}${n ? ` · ${n} engine event${n === 1 ? "" : "s"}` : ""}`;
+  summary.textContent = `${diagSummary()}${sim !== "off" ? ` · simulation: ${sim} — badges say “(simulated)”` : ""}${n ? ` · ${n} engine event${n === 1 ? "" : "s"}` : ""}`;
 }
 
 /** The two places that describe the on-device model in words: the legend note on
@@ -354,6 +366,7 @@ function renderSession(): void {
   app.innerHTML = `
     ${topbarHtml(`<button id="back" class="ghost">← Projects</button>`, { narrow: true })}
     <main class="session">
+      ${simBannerHtml()}
       <h1 class="session-title">${escapeHtml(p.name)} <span class="muted">· ${structureLabel(p.structureType)}</span></h1>
 
       <section class="panel" id="capture">
@@ -450,8 +463,11 @@ async function onCapture(): Promise<void> {
     // the SDK said: that engine, "unknown" when it did not say, "rule_based"
     // when the rules structured the note (engine.ts).
     const engineOf = recordEngine(answer.badge);
+    // A record made under the demo simulation (SPEC §6.5) outlives it: the engine in
+    // `engineOf` never ran, so from here on the record keeps its "(simulated)" label.
+    const simulated = engineSimulation() !== "off";
     const fields = { component: record.component || "(unspecified)", defectType: record.defectType || "(unspecified)", quantity: record.quantity || "(unspecified)", severity: asSeverity(record.severity), notes: record.notes };
-    out.innerHTML = answerBlock("Structured record", answer, recordCardHtml({ ...fields, extractedBy: engineOf }, note, false, true));
+    out.innerHTML = answerBlock("Structured record", answer, recordCardHtml({ ...fields, extractedBy: engineOf, simulated }, note, false, true));
     // Save it (pending sync when offline — the honest state).
     const saved = await store.addRecord({
       projectId: activeProject!.id,
@@ -459,6 +475,7 @@ async function onCapture(): Promise<void> {
       rawNote: note,
       ...fields,
       extractedBy: engineOf,
+      ...(simulated ? { simulated: true } : {}),
       syncState: navigator.onLine ? "synced" : "pending",
     });
     noteEl.value = "";
@@ -479,13 +496,16 @@ interface RecordCardData {
   notes: string;
   createdAt?: string;
   extractedBy?: DefectRecord["extractedBy"];
+  simulated?: boolean;
   syncState?: DefectRecord["syncState"];
 }
 
-function engineTagHtml(extractedBy?: DefectRecord["extractedBy"]): string {
-  if (!extractedBy) return "";
-  const cls = extractedBy === "on_device" ? "device" : extractedBy === "in_cloud" ? "cloud" : extractedBy === "unknown" ? "unknown" : "neutral";
-  return `<span class="chip ${cls}" data-testid="record-engine">${escapeHtml(recordEngineLabel(extractedBy))}</span>`;
+/** The engine chip of a record card. `simulated` records (made under the demo simulation)
+ *  carry "(simulated)" in the label itself, for as long as the record exists. */
+function engineTagHtml(r: Pick<RecordCardData, "extractedBy" | "simulated">): string {
+  if (!r.extractedBy) return "";
+  const cls = r.extractedBy === "on_device" ? "device" : r.extractedBy === "in_cloud" ? "cloud" : r.extractedBy === "unknown" ? "unknown" : "neutral";
+  return `<span class="chip ${cls}" data-testid="record-engine">${escapeHtml(recordEngineLabel(r.extractedBy, r.simulated))}</span>`;
 }
 
 /** One structured record. Built from joined lines (no stray whitespace) and the CSS resets
@@ -499,7 +519,7 @@ function recordCardHtml(r: RecordCardData, _rawNote: string, showSync = true, wi
     : "";
   return [
     `<div class="record sev-${r.severity}">`,
-    `<div class="record-head"><span class="sev-dot" aria-hidden="true"></span><strong>${escapeHtml(title)}</strong><span class="record-component">${escapeHtml(r.component)}</span><span class="record-chips">${engineTagHtml(r.extractedBy)}${sync}</span></div>`,
+    `<div class="record-head"><span class="sev-dot" aria-hidden="true"></span><strong>${escapeHtml(title)}</strong><span class="record-component">${escapeHtml(r.component)}</span><span class="record-chips">${engineTagHtml(r)}${sync}</span></div>`,
     `<div class="record-meta"><span>${escapeHtml(r.quantity)}</span><span>severity: ${sev}</span>${time}</div>`,
     r.notes ? `<div class="record-notes">${escapeHtml(r.notes)}</div>` : "",
     withActions ? `<div class="row record-actions"><button class="ghost check-btn">Check severity vs reference</button><span class="check-out" aria-live="polite"></span></div>` : "",
