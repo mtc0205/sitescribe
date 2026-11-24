@@ -403,7 +403,7 @@ function renderSession(): void {
           <h2>Records <span id="record-count" class="muted"></span></h2>
           <div class="row">
             <button id="sync-btn" class="ghost" title="Simulate returning to coverage (demo mode flips pending → synced)">↻ Back in range</button>
-            <button id="report-btn" class="ghost"${report.offered ? "" : ` disabled title="${escapeHtml(report.explanation)}"`}>☁ Draft report</button>
+            <button id="report-btn" class="ghost"${report.offered ? "" : ` disabled title="${escapeHtml(report.detail)}"`}>☁ Draft report</button>
           </div>
         </div>
         ${report.offered ? "" : `<p class="muted flag-off" id="report-flag-off" data-testid="flag-off-report">${escapeHtml(report.explanation)}</p>`}
@@ -530,11 +530,11 @@ function engineTagHtml(r: Pick<RecordCardData, "extractedBy" | "simulated">): st
 }
 
 /** The severity cross-check control of a record card. Switched off by Remote Config →
- *  the button is disabled and its tooltip says why; the visible one-line explanation
- *  sits under the Records header (SPEC §7). */
+ *  the button is disabled, its tooltip carries the line and the switch's key; the
+ *  visible one-line explanation sits under the Records header (SPEC §7). */
 function recordActionsHtml(): string {
   const g = gate("severityCheck");
-  return `<div class="row record-actions"><button class="ghost check-btn"${g.offered ? "" : ` disabled title="${escapeHtml(g.explanation)}"`}>Check severity vs reference</button><span class="check-out" aria-live="polite"></span></div>`;
+  return `<div class="row record-actions"><button class="ghost check-btn"${g.offered ? "" : ` disabled title="${escapeHtml(g.detail)}"`}>Check severity vs reference</button><span class="check-out" aria-live="polite"></span></div>`;
 }
 
 /** One structured record. Built from joined lines (no stray whitespace) and the CSS resets

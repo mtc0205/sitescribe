@@ -21,8 +21,10 @@ export type GatedFeature = keyof FeatureFlags;
 export interface FeatureGate {
   /** False: the control is disabled and nothing is requested. */
   offered: boolean;
-  /** One honest line for the disabled control (empty when offered). */
+  /** One honest line, shown next to the disabled control (empty when offered). */
   explanation: string;
+  /** The same line plus the switch's key, for the disabled control's tooltip (empty when offered). */
+  detail: string;
 }
 
 const KEYS: Record<GatedFeature, string> = {
@@ -40,11 +42,9 @@ const NAMES: Record<GatedFeature, string> = {
  * `via` names where the value came from, for the explanation ("Remote Config").
  */
 export function featureGate(flags: FeatureFlags, feature: GatedFeature, via = "Remote Config"): FeatureGate {
-  if (flags[feature] !== false) return { offered: true, explanation: "" };
-  return {
-    offered: false,
-    explanation: `${NAMES[feature]} is switched off by ${via} (${KEYS[feature]} = false) — no request is sent.`,
-  };
+  if (flags[feature] !== false) return { offered: true, explanation: "", detail: "" };
+  const explanation = `${NAMES[feature]} is switched off by ${via} — no request is sent.`;
+  return { offered: false, explanation, detail: `${explanation} Switch: ${KEYS[feature]} = false.` };
 }
 
 /**

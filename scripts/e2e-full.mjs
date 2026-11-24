@@ -479,19 +479,22 @@ const switchesOff = await offPage.evaluate(() => ({
   reportText: document.querySelector("[data-testid=flag-off-report]")?.textContent ?? null,
   checks: [...document.querySelectorAll(".check-btn")].map((b) => ({ disabled: b.disabled, title: b.title })),
   severityText: document.querySelector("[data-testid=flag-off-severity]")?.textContent ?? null,
+  lineHeights: [...document.querySelectorAll(".flag-off")].map((el) => Math.round(el.getBoundingClientRect().height)),
+  viewportWidth: window.innerWidth,
 }));
 check(
-  "report drafting switched off · the button is disabled and the panel says why, in one line",
+  "report drafting switched off · the button is disabled, one line under the header says why, the tooltip adds the switch",
   switchesOff.report === true &&
-    switchesOff.reportText === "Report drafting is switched off by the demo URL flag (feature_report_drafting = false) — no request is sent." &&
-    switchesOff.reportTitle === switchesOff.reportText,
+    switchesOff.reportText === "Report drafting is switched off by the demo URL flag — no request is sent." &&
+    switchesOff.reportTitle === switchesOff.reportText + " Switch: feature_report_drafting = false.",
   JSON.stringify(switchesOff),
 );
 check(
-  "severity check switched off · every Check severity button is disabled with the reason, and the panel says why, in one line",
+  "severity check switched off · every Check severity button is disabled (tooltip: the reason and the switch), one line under the header says why",
   switchesOff.checks.length >= 3 &&
-    switchesOff.checks.every((b) => b.disabled && b.title === switchesOff.severityText) &&
-    switchesOff.severityText === "The severity cross-check is switched off by the demo URL flag (feature_severity_check = false) — no request is sent.",
+    switchesOff.checks.every((b) => b.disabled && b.title === switchesOff.severityText + " Switch: feature_severity_check = false.") &&
+    switchesOff.severityText === "The severity cross-check is switched off by the demo URL flag — no request is sent." &&
+    switchesOff.lineHeights.every((h) => h <= 24), // one visual line, not a wrapped paragraph
   JSON.stringify(switchesOff),
 );
 await offPage.evaluate(() => document.querySelector("#record-list")?.scrollIntoView({ block: "start" }));
