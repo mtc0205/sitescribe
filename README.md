@@ -7,7 +7,7 @@ Capture structured defect records inside signal-dead structures — bridge under
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Hackathon](https://img.shields.io/badge/hackathon-Firebase%20%23BuildHybridAI-ffca28?logo=firebase&logoColor=black)](https://firebase.google.com/docs/ai-logic)
 [![Engines](https://img.shields.io/badge/engines-Gemini%20Nano%20on--device%20%C2%B7%20cloud%20Gemini-34d399)](docs/SPEC.md)
-[![Last verified](https://img.shields.io/badge/last%20verified-2026--11--24-brightgreen)](#verified-state)
+[![Last verified](https://img.shields.io/badge/last%20verified-2026--11--25-brightgreen)](#verified-state)
 
 > Built for the Firebase **#BuildHybridAI 2026** hackathon (Web / Chrome platform).
 
@@ -31,7 +31,7 @@ Taken from a local **demo-mode** build (no Firebase project wired up — the sta
 1. Inspections happen where connectivity doesn't. An AI field assistant that dies offline is useless exactly where it's needed.
 2. Infrastructure defect data is security-sensitive. It shouldn't leave the device by default.
 
-Every AI output in SiteScribe carries a live **engine badge** — ⚡ `On-device · Gemini Nano` or ☁ `Cloud · Gemini` — driven by the SDK's own `GenerateContentResponse.inferenceSource`, never inferred or faked. When on-device was preferred but the SDK used the cloud, the badge says `↘ Fell back to cloud`. When no engine is reachable at all, a transparent keyword structurer keeps capture working and the badge says `⚙ Rule-based`.
+Every AI output in SiteScribe carries a live **engine badge** — ⚡ `On-device · Gemini Nano` or ☁ `Cloud · Gemini` — driven by the SDK's own `GenerateContentResponse.inferenceSource`, never inferred or faked. When on-device was preferred but the SDK used the cloud, the badge says `↘ Fell back to cloud`. When no engine is reachable at all, a transparent keyword structurer keeps capture working and the badge says `⚙ Rule-based`. The same holds when a model did answer but with text that could not be used: the fields come from the rules, and the record — its badge, its chip and the engine stored with it — says rule-based.
 
 ## Feature routing
 
@@ -56,27 +56,31 @@ Open the printed URL in **Chrome 139+**, enable `chrome://flags/#prompt-api-for-
 What you get in demo mode:
 
 - Everything is stored locally; **the on-device path is real** if Chrome has the model, cloud calls fail honestly because no project is configured.
-- **The first click never waits for the model.** On a browser without Gemini Nano, the first **⚡ Capture** starts Chrome's background download (progress appears in the status chip) and the note is structured right away — by cloud Gemini once a project is wired up, here by the labelled rule-based fallback. Each answer's badge says which one ran; later captures switch to on-device once the model is ready.
+- **The first click never waits for the model.** On a browser without Gemini Nano, the first **⚡ Capture** starts Chrome's background download and the note is structured right away — by cloud Gemini once a project is wired up, here by the labelled rule-based fallback. Download progress shows in the status chip **only until the first answer exists**; after that the chip reports the engine events (the answer's badge, the model's availability), and the progress is in the home-screen legend note and the *Engine & diagnostics* summary. Each answer's badge says which one ran; later captures switch to on-device once the model is ready.
 - The **status bar** always states which engine is on duty — `⚡ On-device ready`, `☁ Cloud engine · on-device optional`, or `⚙ Rule-based structuring` — and after each request shows the badge of the engine that answered.
 - Offline demo: DevTools → Network → **Offline**, then capture a record; with the model installed the badge stays green ⚡ and the record is marked *pending sync*. **↻ Back in range** flips it to *synced* (in demo mode this is a simulation of the server acknowledgement).
 - The home screen's **Engine & diagnostics** section (collapsed by default) shows live telemetry — runtime mode, Prompt API exposure, on-device model availability — and the engine log once there are events.
 - If no engine is reachable at all (offline demo, no model), capture degrades to the clearly-labelled **⚙ rule-based** structurer — the loop never dies and nothing is faked.
 
-For UI demonstrations of the cloud badge states before a Firebase project is wired up, append `?engine=sim_cloud` or `?engine=sim_fallback` — demo-mode-only, every badge carries "(simulated)", and a banner says so at the top of the page. Real runs never touch this path.
+For UI demonstrations of the cloud badge states before a Firebase project is wired up, append `?engine=sim_cloud` or `?engine=sim_fallback` — demo-mode-only. Every answer badge, legend chip and record card carries "(simulated)", the status chip shows the simulated label before and after each answer, and a banner says so at the top of both views. A record made under the simulation keeps its label after the simulation is switched off. Real runs never show it.
+
+Two Remote Config keys are kill-switches: `feature_report_drafting` and `feature_severity_check`, both on by default. When one is `false` the feature is not offered — its control is disabled, one line under *Records* says why, and no request is sent. Demo mode has no Remote Config, so the same state can be tried with `?feature_report_drafting=false` and/or `?feature_severity_check=false` (demo mode only).
 
 ## Verified state
 
-Last run on 2026-11-24 (Windows, Chrome 158, Node 24) against this exact tree:
+Last run on 2026-11-25 (Windows, Chrome 158, Node 24) against this exact tree, except the two rows that carry their own date:
 
 | Command | What it proves | Result |
 |---|---|---|
 | `npm run check` | TypeScript, strict | 0 errors |
-| `npm test` | rule-based extraction, conflict merge, pending queue, bootstrap env writer, local-time formatting, video timeline maths | 64 / 64 |
-| `node scripts/e2e-full.mjs` | demo-mode loop on a fresh browser profile: seeds, local + zoned timestamps, a half-typed note survives a connectivity change, online capture synced, offline capture pending → synced, F1–F4 | 13 / 13 |
-| `node scripts/e2e-emulator.mjs` | the **real Firebase SDK** chain (Auth, Firestore, Remote Config) against the local Emulator Suite: anonymous sign-in, offline write not on the server → arrives after reconnect, rules reject cross-user access (403), PWA shell renders after an offline reload | 19 / 19 |
-| `node scripts/e2e-ondevice.mjs` | **real Gemini Nano on-device**, network cut (any fetch fails): the capture and Q&A badges come from `inferenceSource === "on_device"` | 2 / 2 |
+| `npm test` | rule-based extraction, engine attribution, Remote Config feature switches, conflict merge, pending queue, bootstrap env writer, local-time formatting, video timeline maths | 79 / 79 |
+| `node scripts/e2e-full.mjs` | demo-mode loop on a fresh browser profile: seeds, local + zoned timestamps, a half-typed note survives a connectivity change, online capture synced, offline capture pending → synced, F1–F4; the two capture edge cases (a reply that cannot be used, a reply with no engine named) with canned SDK replies; simulation labelling; the feature switches | 31 / 31 |
+| `node scripts/e2e-emulator.mjs` | the **real Firebase SDK** chain (Auth, Firestore, Remote Config) against the local Emulator Suite: anonymous sign-in, offline write not on the server → arrives after reconnect, rules reject cross-user access (403), PWA shell renders after an offline reload, and the demo-only URL switches have no effect there | 21 / 21 † |
+| `node scripts/e2e-ondevice.mjs` | **real Gemini Nano on-device**, network cut (any fetch fails): the capture and Q&A badges come from `inferenceSource === "on_device"` | 2 / 2 on 2026-11-24. Not re-run on 2026-11-25 (that machine stayed below the memory threshold set for the suite), so the 2026-11-25 change on the capture path has not been exercised on a real device model |
 | `node scripts/ui-screens.mjs` | WCAG contrast of every text/background pair, computed from real styles (all ≥ 4.5:1, minimum 5.7:1), plus a first-screen audit | exit 0 |
-| clean checkout → `npm ci` → `check` / `test` / `build` → `npm run dev` | the quick-start needs nothing but this repository | install ok · 0 errors · 63 pass + 1 skipped (it reads the video script, which lives next to the repo) · build ok · app served |
+| clean copy (`git archive`) → `npm ci` → `check` / `test` / `build` → served by the hosting emulator | the quick-start needs nothing but this repository | install ok · 0 errors · 78 pass + 1 skipped (it reads the video script, which lives next to the repo) · build ok · app served |
+
+† 2026-11-25: port 8080 was held by an unrelated service on that machine, so the suite ran on a clean copy whose only difference was the Firestore emulator port (8090 instead of 8080). The last run with the standard configuration was on 2026-11-24: 19 / 19.
 
 Nothing on the on-device path can fake a pass: `e2e-ondevice.mjs` accepts only a genuine on-device badge and exits 2 (`tools/ondevice-proof.json` → `model-not-available`) when the model is absent.
 

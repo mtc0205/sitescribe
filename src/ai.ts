@@ -67,7 +67,8 @@ export function onEngineUpdate(fn: EngineListener): () => void {
   return () => engineListeners.delete(fn);
 }
 
-/** Rolling log of engine events (SPEC §4: Settings → engine badge log). */
+/** Rolling log of engine events (SPEC §6.4), shown in the home screen's
+ *  collapsed *Engine & diagnostics* section — there is no settings screen (§8). */
 export interface EngineLogEntry {
   ts: string;
   feature: string;
