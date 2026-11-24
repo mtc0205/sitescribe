@@ -12,6 +12,8 @@ export interface EngineBadgeInfo {
   fellBack?: boolean;
   /** Model download progress 0..1 when engine === "download". */
   downloadProgress?: number;
+  /** The SDK delivered a reply without `inferenceSource`. "pending" then means "not told", not "waiting" (SPEC §6.1). */
+  engineUnknown?: boolean;
   /** Full label — always what the answer itself shows. */
   label: string;
   /** Compact wording for the status bar (same facts, fewer words). Falls back to `label`. */
@@ -33,8 +35,10 @@ export interface DefectRecord {
   quantity: string;
   severity: "unknown" | "minor" | "moderate" | "severe";
   notes: string;
-  /** Which engine produced the extraction. */
-  extractedBy: EngineKind | "rule_based";
+  /** Which engine produced the fields: a model, `"rule_based"` (no model reply, or an
+   *  unusable one — see src/engine.ts), or `"unknown"` (the model produced them but the
+   *  SDK did not say which engine). */
+  extractedBy: EngineKind | "rule_based" | "unknown";
   /** Pending cloud sync when captured offline (demo/local mode always true until "synced"). */
   syncState: "pending" | "synced";
 }

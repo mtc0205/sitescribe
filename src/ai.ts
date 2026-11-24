@@ -6,7 +6,8 @@
  * built from `GenerateContentResponse.inferenceSource`.
  */
 import type { AiAnswer, EngineBadgeInfo } from "./types";
-import { ruleBasedStructure, ruleBasedCrossCheck, repairJson, type DefectJson } from "./extract";
+import { ruleBasedStructure, ruleBasedCrossCheck, type DefectJson } from "./extract";
+import { badgeFromSource, settleStructureReply } from "./engine";
 
 export type { DefectJson };
 
@@ -168,14 +169,6 @@ function requireModel(mode: (typeof InferenceMode)[keyof typeof InferenceMode]):
   });
 }
 
-function badgeFor(engine: "on_device" | "in_cloud", fellBack: boolean): EngineBadgeInfo {
-  return engine === "on_device"
-    ? { engine, fellBack, label: "On-device · Gemini Nano" }
-    : fellBack
-      ? { engine, fellBack, label: "Fell back to cloud · Gemini" }
-      : { engine, fellBack, label: "Cloud · Gemini" };
-}
-
 let deviceBudgetedCalls = 0;
 
 /**
@@ -282,10 +275,9 @@ async function ask(
   }
   const result = await model.generateContent(request);
   const meta = (result.response as unknown as GenerateExtras);
-  const source = meta.inferenceSource;
-  const badge: EngineBadgeInfo = source
-    ? badgeFor(source, requestedOnDevice && source === "in_cloud")
-    : { engine: "pending", label: "Engine unknown" };
+  // The engine is read off the response, never inferred from the requested mode;
+  // a response that does not say is badged "Engine unknown" (engine.ts).
+  const badge = badgeFromSource(meta.inferenceSource, requestedOnDevice);
   emitEngine(badge, feature);
   return { text: result.response.text(), badge };
 }
@@ -307,18 +299,13 @@ export async function structureNote(note: string): Promise<{ record: DefectJson;
       ),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`AI call timed out (${Math.round(budgetMs / 1000)}s)`)), budgetMs)),
     ]);
-    let parsed: DefectJson;
-    try {
-      parsed = repairJson(answer.text);
-      if (!parsed || typeof parsed !== "object" || typeof parsed.component !== "string") throw new Error("unexpected JSON shape");
-    } catch {
-      // The engine answered, but not with usable JSON (the on-device path has
-      // no schema enforcement). Keep the loop alive with the transparent
-      // rule-based record and say so inside the record itself.
-      const fallback = ruleBasedStructure(note);
-      parsed = { ...fallback, notes: `${fallback.notes} [engine reply was not valid JSON — fields structured by rules]`.trim() };
-    }
-    return { record: parsed, answer };
+    // The badge that is true for the record is not always the one the reply
+    // carried: a reply that is not usable JSON leaves the fields to the rules,
+    // and the record — and every chip on it — then says rule-based, while its
+    // notes say that the engine did answer (engine.ts, SPEC §5.1 and §6.1).
+    const outcome = settleStructureReply(answer.text, answer.badge, note);
+    if (!outcome.fromModel) emitEngine(outcome.badge, "F1 structure");
+    return { record: outcome.record, answer: outcome.fromModel ? answer : { ...answer, badge: outcome.badge } };
   } catch (e) {
     // Honest degradation: no on-device model AND no cloud reachability
     // (e.g. offline demo without a Firebase project). Structure the note with

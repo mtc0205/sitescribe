@@ -14,6 +14,9 @@
  *    re-render on online/offline events)
  *  - an online capture is "synced" at once in demo mode (live mode keeps the
  *    record pending until Firestore acks — that is e2e-emulator's job)
+ * and from the 2026-11-25 audit night:
+ *  - the two F1 edge cases, with the SDK's cloud reply canned in (e2e-16/17):
+ *    a reply that is not usable JSON, and a reply without `inferenceSource`
  * Asserts the full loop; exits non-zero on any failure.
  *
  * Base URL: --url <base> or --port <n> (default http://127.0.0.1:5173, the
@@ -64,20 +67,23 @@ await sleep(2000);
 await page.click(".card");
 await sleep(1000);
 
-async function capture(note) {
-  await page.type("#note", note);
-  await page.click("#capture-btn");
+/** Type `note` into the capture box of `pg`, click Capture, wait for the result.
+ *  Returns the answer badge, the preview's head row and the newest list card's sync chip. */
+async function captureOn(pg, note) {
+  await pg.type("#note", note);
+  await pg.click("#capture-btn");
   for (let i = 0; i < 45; i++) {
     await sleep(1000);
-    const done = await page.evaluate(() => !!document.querySelector("#capture-result .ai-block"));
+    const done = await pg.evaluate(() => !!document.querySelector("#capture-result .ai-block"));
     if (done) break;
   }
-  return page.evaluate(() => ({
+  return pg.evaluate(() => ({
     badge: document.querySelector("#capture-result .ai-head .chip")?.textContent ?? null,
     record: document.querySelector("#capture-result .record-head")?.textContent?.replace(/\s+/g, " ").trim() ?? null,
     syncChip: document.querySelector("#record-list .record .chip.pending, #record-list .record .chip.online")?.textContent ?? null,
   }));
 }
+const capture = (note) => captureOn(page, note);
 
 // ---- 0. first-time visitor: demo seeds are synced, timestamps are local + zoned ----
 const fresh = await page.evaluate(() => ({
@@ -187,6 +193,76 @@ check(
   `before=${JSON.stringify(before)} after=${JSON.stringify(after)}`,
 );
 await page.screenshot({ path: SHOTS + "\\e2e-15-back-in-range-synced.png" });
+
+// ---- 7. the two F1 edge cases (2026-11-25), the SDK's cloud reply canned in ----
+// Demo mode has no cloud, so the reply is answered inside the browser (CDP Fetch
+// interception) before it leaves it. A canned reply can only ever lead this suite
+// to a rule-based or an "Engine unknown" record — never to a model badge — which
+// is exactly what these checks assert.
+const CANNED_RECORD = { component: "web of girder G2", defectType: "longitudinal crack", quantity: "~2mm wide, ~3m long", severity: "moderate", notes: "canned reply for the e2e run" };
+async function captureWithCannedReply(shot, text, { hideSource = false } = {}) {
+  const p = await browser.newPage();
+  if (hideSource) {
+    // The installed SDK always sets `inferenceSource` (createEnhancedContentResponse
+    // defaults it). The omission SPEC §6.1 allows is forced where the app reads it.
+    await p.evaluateOnNewDocument(() => {
+      Object.defineProperty(Object.prototype, "inferenceSource", { configurable: true, get() { return undefined; }, set() {} });
+    });
+  }
+  const cdp = await p.createCDPSession();
+  await cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*generateContent*", requestStage: "Request" }] });
+  let served = 0;
+  cdp.on("Fetch.requestPaused", async (ev) => {
+    const cors = [{ name: "Access-Control-Allow-Origin", value: "*" }];
+    if (ev.request.method === "OPTIONS") {
+      await cdp.send("Fetch.fulfillRequest", { requestId: ev.requestId, responseCode: 204, responseHeaders: [...cors, { name: "Access-Control-Allow-Methods", value: "POST, OPTIONS" }, { name: "Access-Control-Allow-Headers", value: ev.request.headers["Access-Control-Request-Headers"] ?? "*" }] });
+      return;
+    }
+    served++;
+    const body = { candidates: [{ content: { role: "model", parts: [{ text }] }, finishReason: "STOP", index: 0 }] };
+    await cdp.send("Fetch.fulfillRequest", { requestId: ev.requestId, responseCode: 200, responseHeaders: [...cors, { name: "Content-Type", value: "application/json" }], body: Buffer.from(JSON.stringify(body)).toString("base64") });
+  });
+  await p.goto(URL_BASE + "/?engine=off", { waitUntil: "load", timeout: 30000 });
+  await p.waitForSelector("#project-list .card", { timeout: 30000 });
+  await sleep(800);
+  await p.click("#project-list .card");
+  await sleep(800);
+  const captured = await captureOn(p, NOTE_ONLINE);
+  const state = await p.evaluate(() => {
+    const newest = JSON.parse(localStorage.getItem("sitescribe.v1") ?? "{}").records?.[0] ?? null;
+    return {
+      previewChip: document.querySelector("#capture-result .record-chips [data-testid=record-engine]")?.textContent ?? null,
+      listChip: document.querySelector("#record-list .record [data-testid=record-engine]")?.textContent ?? null,
+      engineChip: document.querySelector("#engine-chip")?.textContent ?? null,
+      notes: document.querySelector("#capture-result .record-notes")?.textContent ?? null,
+      stored: newest ? { extractedBy: newest.extractedBy, component: newest.component, notes: newest.notes } : null,
+    };
+  });
+  await p.screenshot({ path: SHOTS + "\\e2e-" + shot });
+  return { ...captured, ...state, served };
+}
+const unusable = await captureWithCannedReply("16-unusable-reply-rulebased.png", "I'm sorry, I can't structure that note.");
+check(
+  "model reply that is not usable JSON: record is shown as rule-based, not with the model's chip",
+  unusable.served === 1 && /^⚙ Rule-based \(/.test(unusable.badge ?? "") && /not with usable JSON/.test(unusable.badge ?? "") && unusable.previewChip === "⚙ rule-based" && unusable.listChip === "⚙ rule-based" && /Rule-based/.test(unusable.engineChip ?? ""),
+  JSON.stringify(unusable),
+);
+check(
+  "model reply that is not usable JSON: saved as rule_based, notes say the engine replied",
+  unusable.stored?.extractedBy === "rule_based" && /\[Gemini replied, but its reply was not usable JSON — fields structured by rules\]/.test(unusable.stored?.notes ?? ""),
+  JSON.stringify(unusable.stored),
+);
+const unnamed = await captureWithCannedReply("17-engine-unknown.png", JSON.stringify(CANNED_RECORD), { hideSource: true });
+check(
+  "reply without inferenceSource: badge, record chip and status chip say Engine unknown",
+  unnamed.served === 1 && unnamed.badge === "⏳ Engine unknown" && unnamed.previewChip === "⏳ engine unknown" && unnamed.listChip === "⏳ engine unknown" && unnamed.engineChip === "⏳ Engine unknown",
+  JSON.stringify(unnamed),
+);
+check(
+  "reply without inferenceSource: saved as unknown — the model's fields, no rule marker",
+  unnamed.stored?.extractedBy === "unknown" && unnamed.stored?.component === CANNED_RECORD.component && !/structured by rules/.test(unnamed.stored?.notes ?? ""),
+  JSON.stringify(unnamed.stored),
+);
 } catch (e) {
   check("e2e-full ran to completion", false, String(e));
 } finally {

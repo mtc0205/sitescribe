@@ -6,6 +6,7 @@ import { initFirebase, runtime } from "./firebase";
 import { structureNote, askFieldQuestion, draftReport, crossCheckSeverity, warmDeviceModel, deviceAvailability, onEngineUpdate, deviceApiAvailable, initEngineSimulationFromUrl, engineSimulation, getEngineLog } from "./ai";
 import { store, seedIfEmpty, onStoreChange } from "./store";
 import { ruleBasedStructure } from "./extract";
+import { recordEngine, recordEngineLabel } from "./engine";
 import { formatRecordTime, formatLogTime, localDateTime, zoneLabelNow } from "./format";
 import type { AiAnswer, DefectRecord, EngineBadgeInfo, Project } from "./types";
 import "./styles.css";
@@ -445,10 +446,10 @@ async function onCapture(): Promise<void> {
   try {
     const { record, answer } = await structureNote(note);
     stateEl.textContent = "";
-    // Which engine produced the fields — taken from the badge, i.e. from the SDK.
-    const engineOf: DefectRecord["extractedBy"] =
-      answer.badge.engine === "on_device" ? "on_device" :
-      answer.badge.engine === "in_cloud" ? "in_cloud" : "rule_based";
+    // Which engine produced the fields — taken from the badge, i.e. from what
+    // the SDK said: that engine, "unknown" when it did not say, "rule_based"
+    // when the rules structured the note (engine.ts).
+    const engineOf = recordEngine(answer.badge);
     const fields = { component: record.component || "(unspecified)", defectType: record.defectType || "(unspecified)", quantity: record.quantity || "(unspecified)", severity: asSeverity(record.severity), notes: record.notes };
     out.innerHTML = answerBlock("Structured record", answer, recordCardHtml({ ...fields, extractedBy: engineOf }, note, false, true));
     // Save it (pending sync when offline — the honest state).
@@ -482,10 +483,9 @@ interface RecordCardData {
 }
 
 function engineTagHtml(extractedBy?: DefectRecord["extractedBy"]): string {
-  if (extractedBy === "on_device") return `<span class="chip device">⚡ on-device</span>`;
-  if (extractedBy === "in_cloud") return `<span class="chip cloud">☁ cloud</span>`;
-  if (extractedBy === "rule_based") return `<span class="chip neutral">⚙ rule-based</span>`;
-  return "";
+  if (!extractedBy) return "";
+  const cls = extractedBy === "on_device" ? "device" : extractedBy === "in_cloud" ? "cloud" : extractedBy === "unknown" ? "unknown" : "neutral";
+  return `<span class="chip ${cls}" data-testid="record-engine">${escapeHtml(recordEngineLabel(extractedBy))}</span>`;
 }
 
 /** One structured record. Built from joined lines (no stray whitespace) and the CSS resets
