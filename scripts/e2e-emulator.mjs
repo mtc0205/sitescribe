@@ -13,6 +13,12 @@
  *   emu-5  Firestore rules reject cross-user access:
  *          unauthenticated read → 403, second anonymous user's read → 403,
  *          owner's read → 200 (all via REST with the users' idTokens)
+ *   emu-6  offline hard reload still renders the PWA shell and lists the
+ *          captured record from IndexedDB
+ *   emu-7  (2026-11-25) the demo-only URL switches have no effect on this real
+ *          SDK path: ?engine=sim_cloud shows no banner and nothing
+ *          "(simulated)"; ?feature_report_drafting=false /
+ *          ?feature_severity_check=false leave both features offered
  *
  * The script builds (VITE_USE_EMULATOR=1), boots the emulator suite itself
  * (needs JAVA_HOME pointing at a JDK — see README), runs Chrome headless via
@@ -293,6 +299,45 @@ try {
   await page.screenshot({ path: path.join(SHOTS, "emu-7-offline-records-from-cache.png") });
   await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 40, downloadThroughput: 2_000_000, uploadThroughput: 1_000_000 });
   await page.evaluate(() => dispatchEvent(new Event("online")));
+
+  /* ---------- 7. demo-only URL switches: no effect on the real SDK path ---------- */
+  // ?engine=sim_cloud and the feature-switch flags are demo-mode-only (SPEC §6.5, §7).
+  // In emulator mode nothing may be simulated or switched off by them: Remote Config
+  // alone decides, and its values here are the baked-in defaults.
+  const ctx2 = await browser.createBrowserContext();
+  try {
+    const page2 = await ctx2.newPage();
+    await page2.setViewport({ width: 1280, height: 800 });
+    await page2.goto(APP_URL + "?engine=sim_cloud&feature_report_drafting=false&feature_severity_check=false", { waitUntil: "load", timeout: 30_000 });
+    // The first render waits for the Remote Config fetch (and, before it, the
+    // Installations registration). With Google's endpoints reachable-but-blackholed both
+    // hung for 84.5 s on 2026-11-25, so this bound is generous; on a usual network the
+    // card is there within seconds.
+    await poll(() => page2.evaluate(() => !!document.querySelector("#project-list .card")), { timeoutMs: 180_000, label: "second user's seeded project" });
+    await poll(() => page2.evaluate(() => typeof globalThis.__ssRemoteToggles === "object"), { timeoutMs: 15_000, label: "Remote Config hook" });
+    const asked = await page2.evaluate(() => ({
+      banner: !!document.querySelector(".sim-banner"),
+      simulated: /\(simulated\)/.test(document.body.innerText),
+      toggles: globalThis.__ssRemoteToggles,
+    }));
+    check("?engine=sim_cloud has no effect in emulator mode (no banner, nothing marked simulated)", !asked.banner && !asked.simulated, JSON.stringify(asked));
+    await page2.click("#project-list .card");
+    await poll(() => page2.evaluate(() => !!document.querySelector("#note")), { timeoutMs: 15_000, label: "second user's session view" });
+    await poll(() => page2.evaluate(() => document.querySelectorAll(".check-btn").length >= 3), { timeoutMs: 15_000, label: "record cards" });
+    const controls = await page2.evaluate(() => ({
+      report: document.querySelector("#report-btn")?.disabled ?? null,
+      checks: [...document.querySelectorAll(".check-btn")].map((b) => b.disabled),
+      off: document.querySelectorAll("[data-testid^=flag-off]").length,
+    }));
+    check(
+      "URL feature flags have no effect in emulator mode (Remote Config defaults: both features offered)",
+      asked.toggles?.featureReportDrafting === true && asked.toggles?.featureSeverityCheck === true && controls.report === false && controls.checks.every((d) => d === false) && controls.off === 0,
+      JSON.stringify(controls),
+    );
+    await page2.screenshot({ path: path.join(SHOTS, "emu-8-url-switches-ignored.png") });
+  } finally {
+    await ctx2.close();
+  }
 } catch (e) {
   check("e2e-emulator ran to completion", false, String(e));
 } finally {
