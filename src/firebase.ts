@@ -14,6 +14,7 @@
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import { getAI, GoogleAIBackend } from "firebase/ai";
 import { initAI } from "./ai";
+import { parseFlagOverrides } from "./flags";
 
 const EMULATOR = import.meta.env.VITE_USE_EMULATOR === "1";
 const RAW_CONFIG = import.meta.env.VITE_FIREBASE_CONFIG as string | undefined;
@@ -69,6 +70,14 @@ export async function initFirebase(): Promise<RuntimeMode> {
     runtime.app = app;
     runtime.mode = "demo";
     (globalThis as { __ssRuntimeMode?: string }).__ssRuntimeMode = "demo";
+    // Demo mode has no Remote Config, so the feature switches keep their defaults —
+    // unless the URL switches one off (keys named after the Remote Config ones). That
+    // is the only way to see the switched-off UI without a Firebase project: tests
+    // and screenshots. It has no effect in emulator or live mode, where Remote
+    // Config alone decides (see remoteToggles()).
+    const overrides = parseFlagOverrides(location.search);
+    cachedToggles.featureReportDrafting = overrides.reportDrafting ?? true;
+    cachedToggles.featureSeverityCheck = overrides.severityCheck ?? true;
     const ai = getAI(app, { backend: new GoogleAIBackend() });
     initAI(ai);
     return runtime;
@@ -180,7 +189,9 @@ const cachedToggles: RemoteToggles = {
   featureSeverityCheck: true,
 };
 
+/** The Remote Config values in force (baked-in defaults until — and unless — a fetch
+ *  says otherwise; the feature switches can also be turned off by the demo-only URL
+ *  flag, see initFirebase). Read by the UI through featureGate() in flags.ts. */
 export function remoteToggles(): RemoteToggles {
-  // Live values are cached during initFirebase; defaults otherwise.
   return { ...cachedToggles };
 }

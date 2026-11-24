@@ -21,6 +21,9 @@
  *    chip, status line, record card and log row that reflects the simulated
  *    engine says "(simulated)", the banner is on both views, and a real run
  *    (?engine=off, fresh profile) shows none of it
+ *  - Remote Config kill-switches, switched off through the demo-only URL flags
+ *    (e2e-22): the control is disabled with an explanation and no request is
+ *    sent; with no flag the defaults offer both features
  * Asserts the full loop; exits non-zero on any failure.
  *
  * Base URL: --url <base> or --port <n> (default http://127.0.0.1:5173, the
@@ -447,6 +450,78 @@ try {
 } finally {
   await freshContext.close();
 }
+
+// ---- 9. Remote Config kill-switches (SPEC §7) ----
+// Demo mode has no Remote Config; `?feature_report_drafting=false` and
+// `?feature_severity_check=false` (the key names) stand in for it, demo mode only.
+// Defaults: the first page of this run has no flag in its URL.
+const defaults = await page.evaluate(() => ({
+  report: document.querySelector("#report-btn")?.disabled ?? null,
+  checks: [...document.querySelectorAll(".check-btn")].map((b) => b.disabled),
+  off: document.querySelectorAll("[data-testid^=flag-off]").length,
+}));
+check(
+  "switches at their defaults · Draft report and every Check severity button are offered, nothing says switched off",
+  defaults.report === false && defaults.checks.length >= 3 && defaults.checks.every((d) => d === false) && defaults.off === 0,
+  JSON.stringify(defaults),
+);
+
+const OFF_URL = "?engine=off&feature_report_drafting=false&feature_severity_check=false";
+const offPage = await openPage(OFF_URL);
+await offPage.click("#project-list .card");
+await offPage.waitForSelector("#note");
+await sleep(400);
+const switchesOff = await offPage.evaluate(() => ({
+  report: document.querySelector("#report-btn")?.disabled ?? null,
+  reportTitle: document.querySelector("#report-btn")?.title ?? null,
+  reportText: document.querySelector("[data-testid=flag-off-report]")?.textContent ?? null,
+  checks: [...document.querySelectorAll(".check-btn")].map((b) => ({ disabled: b.disabled, title: b.title })),
+  severityText: document.querySelector("[data-testid=flag-off-severity]")?.textContent ?? null,
+}));
+check(
+  "report drafting switched off · the button is disabled and the panel says why, in one line",
+  switchesOff.report === true &&
+    switchesOff.reportText === "Report drafting is switched off by the demo URL flag (feature_report_drafting = false) — no request is sent." &&
+    switchesOff.reportTitle === switchesOff.reportText,
+  JSON.stringify(switchesOff),
+);
+check(
+  "severity check switched off · every Check severity button is disabled with the reason, and the panel says why, in one line",
+  switchesOff.checks.length >= 3 &&
+    switchesOff.checks.every((b) => b.disabled && b.title === switchesOff.severityText) &&
+    switchesOff.severityText === "The severity cross-check is switched off by the demo URL flag (feature_severity_check = false) — no request is sent.",
+  JSON.stringify(switchesOff),
+);
+await offPage.evaluate(() => document.querySelector("#record-list")?.scrollIntoView({ block: "start" }));
+await offPage.screenshot({ path: SHOTS + "\\e2e-22-switches-off.png", fullPage: true });
+
+// No request is sent: count the AI Logic calls while the disabled controls are
+// clicked for real and then .click()ed from script.
+const offCdp = await offPage.createCDPSession();
+await offCdp.send("Network.enable");
+let aiRequests = 0;
+offCdp.on("Network.requestWillBeSent", (r) => {
+  if (r.request.method === "POST" && /generateContent/.test(r.request.url)) aiRequests++;
+});
+await offPage.click("#report-btn").catch(() => {});
+await offPage.evaluate(() => {
+  document.querySelector("#report-btn")?.click();
+  document.querySelectorAll(".check-btn").forEach((b) => b.click());
+});
+await sleep(2500);
+const afterClicks = await offPage.evaluate(() => ({
+  reportOut: document.querySelector("#report-out")?.innerHTML ?? "",
+  checkOuts: [...document.querySelectorAll(".check-out")].map((o) => o.textContent),
+}));
+await offPage.click("#back");
+await offPage.waitForSelector("#engine-panel");
+await offPage.click("#engine-panel > summary");
+const offLog = await offPage.evaluate(() => [...document.querySelectorAll("#engine-log-list .log-row")].map((r) => r.textContent.replace(/\s+/g, " ").trim()));
+check(
+  "switched off · no request is sent: no AI call on the wire, no output, no engine event for F3 or F4",
+  aiRequests === 0 && afterClicks.reportOut === "" && afterClicks.checkOuts.every((t) => t === "") && offLog.every((r) => !/F3 report|F4 severity/.test(r)),
+  JSON.stringify({ aiRequests, afterClicks, offLog }),
+);
 } catch (e) {
   check("e2e-full ran to completion", false, String(e));
 } finally {

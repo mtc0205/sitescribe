@@ -168,6 +168,11 @@ button.primary { background: var(--accent); border-color: transparent; color: #0
 button.primary:hover { filter: brightness(1.08); }
 button.ghost { background: transparent; }
 button.ghost:hover { border-color: var(--accent); }
+/* A control a Remote Config switch turned off: inert, but its label stays fully
+   readable (no opacity — contrast is not reduced). The reason is printed next to it. */
+button:disabled { cursor: not-allowed; color: var(--muted); border-style: dashed; }
+button:disabled:hover { border-color: var(--line); filter: none; }
+.flag-off { margin: 0 0 0.6rem; }
 button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .muted { color: var(--muted); font-size: 0.85rem; }
 

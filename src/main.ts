@@ -2,11 +2,12 @@
  * SiteScribe UI — single-page, vanilla TypeScript.
  * Every AI output renders next to an EngineBadge driven by real SDK telemetry.
  */
-import { initFirebase, runtime } from "./firebase";
+import { initFirebase, runtime, remoteToggles } from "./firebase";
 import { structureNote, askFieldQuestion, draftReport, crossCheckSeverity, warmDeviceModel, deviceAvailability, onEngineUpdate, deviceApiAvailable, initEngineSimulationFromUrl, engineSimulation, getEngineLog } from "./ai";
 import { store, seedIfEmpty, onStoreChange } from "./store";
 import { ruleBasedStructure } from "./extract";
 import { recordEngine, recordEngineLabel } from "./engine";
+import { featureGate, type FeatureGate, type GatedFeature } from "./flags";
 import { formatRecordTime, formatLogTime, localDateTime, zoneLabelNow } from "./format";
 import type { AiAnswer, DefectRecord, EngineBadgeInfo, Project } from "./types";
 import "./styles.css";
@@ -31,6 +32,18 @@ function cloudConfigured(): boolean {
 
 function runtimeLabel(): string {
   return runtime.mode === "live" ? (runtime.emulator ? "emulator" : "firebase live") : "local demo";
+}
+
+/** The Remote Config kill-switch for feature `f` (SPEC §7): offered, or switched off
+ *  with the reason. Demo mode has no Remote Config — there the only way a switch is
+ *  off is the demo URL flag, and the explanation says so. */
+function gate(feature: GatedFeature): FeatureGate {
+  const toggles = remoteToggles();
+  return featureGate(
+    { reportDrafting: toggles.featureReportDrafting, severityCheck: toggles.featureSeverityCheck },
+    feature,
+    runtime.mode === "demo" ? "the demo URL flag" : "Remote Config",
+  );
 }
 
 /* ---------- engine badge rendering (SPEC §6) ---------- */
@@ -363,6 +376,8 @@ async function onNewProject(): Promise<void> {
 
 function renderSession(): void {
   const p = activeProject!;
+  const report = gate("reportDrafting");
+  const severity = gate("severityCheck");
   app.innerHTML = `
     ${topbarHtml(`<button id="back" class="ghost">← Projects</button>`, { narrow: true })}
     <main class="session">
@@ -384,9 +399,11 @@ function renderSession(): void {
           <h2>Records <span id="record-count" class="muted"></span></h2>
           <div class="row">
             <button id="sync-btn" class="ghost" title="Simulate returning to coverage (demo mode flips pending → synced)">↻ Back in range</button>
-            <button id="report-btn" class="ghost">☁ Draft report</button>
+            <button id="report-btn" class="ghost"${report.offered ? "" : ` disabled title="${escapeHtml(report.explanation)}"`}>☁ Draft report</button>
           </div>
         </div>
+        ${report.offered ? "" : `<p class="muted flag-off" id="report-flag-off" data-testid="flag-off-report">${escapeHtml(report.explanation)}</p>`}
+        ${severity.offered ? "" : `<p class="muted flag-off" id="severity-flag-off" data-testid="flag-off-severity">${escapeHtml(severity.explanation)}</p>`}
         <div id="record-list" class="list"></div>
         <div id="report-out"></div>
       </section>
@@ -508,6 +525,14 @@ function engineTagHtml(r: Pick<RecordCardData, "extractedBy" | "simulated">): st
   return `<span class="chip ${cls}" data-testid="record-engine">${escapeHtml(recordEngineLabel(r.extractedBy, r.simulated))}</span>`;
 }
 
+/** The severity cross-check control of a record card. Switched off by Remote Config →
+ *  the button is disabled and its tooltip says why; the visible one-line explanation
+ *  sits under the Records header (SPEC §7). */
+function recordActionsHtml(): string {
+  const g = gate("severityCheck");
+  return `<div class="row record-actions"><button class="ghost check-btn"${g.offered ? "" : ` disabled title="${escapeHtml(g.explanation)}"`}>Check severity vs reference</button><span class="check-out" aria-live="polite"></span></div>`;
+}
+
 /** One structured record. Built from joined lines (no stray whitespace) and the CSS resets
  *  `white-space`, so a card inside the pre-wrap answer block has no phantom blank rows. */
 function recordCardHtml(r: RecordCardData, _rawNote: string, showSync = true, withActions = false): string {
@@ -522,7 +547,7 @@ function recordCardHtml(r: RecordCardData, _rawNote: string, showSync = true, wi
     `<div class="record-head"><span class="sev-dot" aria-hidden="true"></span><strong>${escapeHtml(title)}</strong><span class="record-component">${escapeHtml(r.component)}</span><span class="record-chips">${engineTagHtml(r)}${sync}</span></div>`,
     `<div class="record-meta"><span>${escapeHtml(r.quantity)}</span><span>severity: ${sev}</span>${time}</div>`,
     r.notes ? `<div class="record-notes">${escapeHtml(r.notes)}</div>` : "",
-    withActions ? `<div class="row record-actions"><button class="ghost check-btn">Check severity vs reference</button><span class="check-out" aria-live="polite"></span></div>` : "",
+    withActions ? recordActionsHtml() : "",
     `</div>`,
   ].join("");
 }
@@ -543,6 +568,8 @@ async function refreshRecords(): Promise<void> {
     if (!btn) return;
     const rec = records[i];
     btn.addEventListener("click", async () => {
+      // Switched off by Remote Config: the button is disabled anyway — and no request leaves.
+      if (!gate("severityCheck").offered) return;
       const out = el.querySelector(".check-out") as HTMLElement;
       out.textContent = "checking…";
       try {
@@ -589,7 +616,8 @@ async function onBackInRange(): Promise<void> {
 }
 
 async function onDraftReport(): Promise<void> {
-  if (!activeProject) return;
+  // Switched off by Remote Config: the button is disabled anyway — and no request leaves.
+  if (!activeProject || !gate("reportDrafting").offered) return;
   const out = document.querySelector("#report-out")!;
   const records = await store.listRecords(activeProject.id);
   if (!records.length) {
