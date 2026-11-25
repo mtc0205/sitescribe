@@ -1,8 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { badgeFromSource, recordEngine, recordEngineLabel, settleStructureReply } from "../src/engine.ts";
+import { badgeFromSource, recordEngine, recordEngineLabel, settleStructureReply, hybridModelParams } from "../src/engine.ts";
 import { ruleBasedStructure } from "../src/extract.ts";
+import { DEFAULT_CLOUD_MODEL } from "../src/flags.ts";
 import type { EngineBadgeInfo } from "../src/types.ts";
+
+// ---- which cloud model a hybrid call names ----
+
+test("hybridModelParams names the cloud model where SDK 13.4.0 reads it: inCloudParams.model", () => {
+  const params = hybridModelParams("prefer_on_device", "gemini-3.8-flash");
+  assert.deepEqual(params, { mode: "prefer_on_device", inCloudParams: { model: "gemini-3.8-flash" } });
+  // A top-level `model` next to a hybrid `mode` is what the SDK ignores ("… will be ignored"),
+  // calling its own default instead — so there must not be one.
+  assert.ok(!("model" in params));
+});
+
+test("the configured model is passed through unchanged, and the default is gemini-3.8-flash", () => {
+  assert.equal(hybridModelParams("only_in_cloud", "some-other-model").inCloudParams.model, "some-other-model");
+  assert.equal(DEFAULT_CLOUD_MODEL, "gemini-3.8-flash");
+  assert.equal(hybridModelParams("prefer_on_device", DEFAULT_CLOUD_MODEL).inCloudParams.model, "gemini-3.8-flash");
+});
 
 const NOTE = "Longitudinal crack on web of girder G2, about 2 mm wide, 3 m long.";
 const GOOD_JSON = JSON.stringify({

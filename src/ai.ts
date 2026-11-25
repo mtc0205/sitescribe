@@ -7,7 +7,8 @@
  */
 import type { AiAnswer, EngineBadgeInfo } from "./types";
 import { ruleBasedStructure, ruleBasedCrossCheck, type DefectJson } from "./extract";
-import { badgeFromSource, settleStructureReply } from "./engine";
+import { badgeFromSource, hybridModelParams, settleStructureReply } from "./engine";
+import { DEFAULT_CLOUD_MODEL } from "./flags";
 
 export type { DefectJson };
 
@@ -153,7 +154,7 @@ function simulatedAnswer(feature: string, prompt: string): AiAnswer {
 }
 
 let aiService: AI | null = null;
-let cloudModelName = "gemini-3.8-flash";
+let cloudModelName: string = DEFAULT_CLOUD_MODEL;
 
 /**
  * Bind the AI service to an initialized Firebase app.
@@ -166,11 +167,11 @@ export function initAI(ai: AI, remoteCloudModel?: string): void {
 
 function requireModel(mode: (typeof InferenceMode)[keyof typeof InferenceMode]): GenerativeModel {
   if (!aiService) throw new Error("AI service not initialized (no Firebase config)");
-  // Cloud model rides along as the fallback target for PREFER_ON_DEVICE.
-  return getGenerativeModel(aiService, {
-    model: cloudModelName,
-    mode,
-  });
+  // The cloud model is the fallback target of PREFER_ON_DEVICE and the engine of
+  // ONLY_IN_CLOUD tasks. It must be named in `inCloudParams`: with a hybrid `mode` the
+  // SDK ignores a top-level `model` and silently calls its own default instead
+  // (hybridModelParams, engine.ts; SPEC §7).
+  return getGenerativeModel(aiService, hybridModelParams(mode, cloudModelName));
 }
 
 let deviceBudgetedCalls = 0;

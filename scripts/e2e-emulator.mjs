@@ -4,7 +4,9 @@
  *
  *   emu-1  hosting emulator serves the app; runtime chip says "emulator";
  *          anonymous sign-in really happened (Auth emulator user list)
- *   emu-2  Remote Config falls back to baked-in defaults (no RC emulator for web)
+ *   emu-2  Remote Config falls back to baked-in defaults (no RC emulator for web);
+ *          the AI Logic request of the capture names the configured cloud model
+ *          (gemini-3.8-flash) — SDK 13.4.0 used to drop it and call its own default
  *   emu-3  capture while OFFLINE → record stored locally, "pending sync",
  *          and NOT yet present in the Firestore emulator (direct REST check)
  *   emu-4  reconnect → SDK offline queue flushes; direct REST read of
@@ -159,6 +161,12 @@ try {
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800 });
   page.on("pageerror", (e) => console.log("  [pageerror]", String(e).slice(0, 160)));
+  // SDK 13.4.0 warns "… model cannot be configured at the top level … will be ignored" when a
+  // hybrid `mode` is combined with a top-level `model`; the app must not trigger that any more.
+  const topLevelModelWarnings = [];
+  page.on("console", (m) => {
+    if (/cannot be configured at the top level/.test(m.text())) topLevelModelWarnings.push(m.text().slice(0, 160));
+  });
   await page.goto(APP_URL + "?engine=off", { waitUntil: "load", timeout: 30_000 });
   // The first render comes only after the Remote Config fetch (and the Installations
   // registration before it). With Google's endpoints reachable-but-blackholed both hung
@@ -191,6 +199,15 @@ try {
   const NOTE = "Longitudinal crack on web of girder G2, about 2 mm wide, 3 m long, seepage with white efflorescence nearby. (" + NOTE_MARKER + ")";
   const cdp = await page.createCDPSession();
   await cdp.send("Network.enable");
+  // Every AI Logic request the page tries, with the model named in its URL. The app's cloud
+  // model has to reach the SDK: with a hybrid `mode`, SDK 13.4.0 ignores a top-level `model`
+  // and calls its own default (gemini-3.5-flash-lite) — which is what every request got
+  // until 2026-11-25. The event fires for a request even when it then fails offline.
+  const aiRequests = [];
+  cdp.on("Network.requestWillBeSent", (r) => {
+    const m = /\/models\/([^:/?#]+):(generateContent|streamGenerateContent)/.exec(r.request.url);
+    if (m && r.request.method === "POST") aiRequests.push({ model: m[1], task: m[2], url: r.request.url.slice(0, 110) });
+  });
   await cdp.send("Network.emulateNetworkConditions", { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
   await page.evaluate(() => dispatchEvent(new Event("offline")));
   await sleep(600);
@@ -209,6 +226,13 @@ try {
   const badge = await page.evaluate(() => document.querySelector("#capture-result .ai-head .chip")?.textContent ?? "");
   check("offline capture completes with pending-sync state", offlineState >= 1, `pending=${offlineState} badge=${badge}`);
   check("offline capture badge honest (rule-based, no fake engine)", /rule-based/i.test(badge), badge);
+  check(
+    "the AI Logic request names the configured cloud model (gemini-3.8-flash), not the SDK default",
+    aiRequests.length >= 1 && aiRequests.every((r) => r.model === "gemini-3.8-flash"),
+    JSON.stringify(aiRequests),
+  );
+  check("the SDK no longer reports the cloud model as ignored", topLevelModelWarnings.length === 0, topLevelModelWarnings.join(" | "));
+  fs.writeFileSync(path.join(SHOTS, "emu-2-ai-requests.json"), JSON.stringify(aiRequests, null, 2));
   await page.screenshot({ path: path.join(SHOTS, "emu-2-offline-capture-pending.png") });
 
   const offlineDocs = await runRecordsQuery(tokenA, uidA);

@@ -14,7 +14,7 @@
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import { getAI, GoogleAIBackend } from "firebase/ai";
 import { initAI } from "./ai";
-import { parseFlagOverrides } from "./flags";
+import { parseFlagOverrides, DEFAULT_CLOUD_MODEL } from "./flags";
 
 const EMULATOR = import.meta.env.VITE_USE_EMULATOR === "1";
 const RAW_CONFIG = import.meta.env.VITE_FIREBASE_CONFIG as string | undefined;
@@ -150,7 +150,7 @@ export async function initFirebase(): Promise<RuntimeMode> {
   rc.settings.minimumFetchIntervalMillis = 600_000;
   if (EMULATOR) rc.settings.fetchTimeoutMillis = 5_000; // no RC emulator for web SDK → fail fast to defaults
   rc.defaultConfig = {
-    cloud_model: "gemini-3.8-flash",
+    cloud_model: DEFAULT_CLOUD_MODEL,
     feature_report_drafting: true,
     feature_severity_check: true,
   };
@@ -184,7 +184,7 @@ export async function initFirebase(): Promise<RuntimeMode> {
 }
 
 const cachedToggles: RemoteToggles = {
-  cloudModel: "gemini-3.8-flash",
+  cloudModel: DEFAULT_CLOUD_MODEL,
   featureReportDrafting: true,
   featureSeverityCheck: true,
 };

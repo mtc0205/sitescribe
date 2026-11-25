@@ -13,6 +13,16 @@ import type { DefectRecord, EngineBadgeInfo } from "./types.ts";
 import { repairJson, ruleBasedStructure } from "./extract.ts";
 import type { DefectJson } from "./extract.ts";
 
+/**
+ * What the app hands to `getGenerativeModel()` for a hybrid call. The cloud model has to
+ * sit in `inCloudParams`: SDK 13.4.0 ignores a top-level `model` given next to a `mode`
+ * (it warns "… will be ignored") and calls its own default instead — which is what
+ * happened to every request until 2026-11-25, whatever Remote Config said.
+ */
+export function hybridModelParams<M extends string>(mode: M, cloudModel: string): { mode: M; inCloudParams: { model: string } } {
+  return { mode, inCloudParams: { model: cloudModel } };
+}
+
 /** What the SDK reports as the source of a reply (`GenerateContentResponse.inferenceSource`). */
 export type InferenceSource = "on_device" | "in_cloud";
 

@@ -16,6 +16,11 @@ export interface FeatureFlags {
 
 export const FEATURE_DEFAULTS: FeatureFlags = { reportDrafting: true, severityCheck: true };
 
+/** The baked-in default of the third Remote Config key, `cloud_model`: what every request
+ *  calls until a fetch says otherwise. `gemini-3.8-flash` is listed as stable on Firebase's
+ *  AI Logic model page (checked 2026-11-25); it is also the model older ones are routed to. */
+export const DEFAULT_CLOUD_MODEL = "gemini-3.8-flash";
+
 export type GatedFeature = keyof FeatureFlags;
 
 export interface FeatureGate {
