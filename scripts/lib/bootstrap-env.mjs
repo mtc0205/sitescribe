@@ -94,9 +94,23 @@ export function parseAppIdFromCreate(text) {
  * a "not enabled" code → disabled, and `code` says which (CONFIGURATION_NOT_FOUND,
  *                        ADMIN_ONLY_OPERATION, OPERATION_NOT_ALLOWED — the decision is
  *                        classifyAnonymousReply's, shared with live-readiness.mjs)
- * anything else         → could not tell (a bad key is not "disabled")
+ * anything else         → could not tell (a bad key is not "disabled"); asked once more
  */
-export async function checkAnonymousAuth(apiKey) {
+export function checkAnonymousAuth(apiKey, options) {
+  return settleAuthProbe(() => askAnonymousAuth(apiKey), options);
+}
+
+/** What `firebase deploy --only` is given. `auth` only when firebase.json declares
+ *  Authentication providers — that is how the anonymous provider is switched on without
+ *  the console, as Firebase documents: "auth": { "providers": { "anonymous": true } }. */
+export function deployTargets(firebaseConfig) {
+  const targets = ["hosting", "firestore:rules", "firestore:indexes", "remote-config"];
+  if (Object.keys(firebaseConfig?.auth?.providers ?? {}).length) targets.push("auth");
+  return targets;
+}
+
+/** One Identity Toolkit round trip. Never throws: what it could not read is "could not tell". */
+async function askAnonymousAuth(apiKey) {
   try {
     const r = await fetch("https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=" + apiKey, {
       method: "POST",
@@ -111,6 +125,21 @@ export async function checkAnonymousAuth(apiKey) {
   } catch (e) {
     return { enabled: null, code: null, detail: String(e) };
   }
+}
+
+/**
+ * Whether anonymous sign-in is enabled, asked for once more when the first answer told
+ * neither way (a timeout, a 5xx, an unreadable body — "unknown: TimeoutError" is all the
+ * bootstrap printed once on 2026-11-26, right after the provider had been switched on).
+ * A settled answer — enabled, or a "not enabled" code — is final. `sleep` is a parameter
+ * so the decision is unit-tested without waiting.
+ */
+export async function settleAuthProbe(ask, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), delayMs = 1_500 } = {}) {
+  const first = await ask();
+  if (first.enabled !== null) return first;
+  await sleep(delayMs);
+  const second = await ask();
+  return second.enabled === null ? { ...second, detail: `asked twice: ${second.detail}` } : second;
 }
 
 /** Check the hosting URL answers (200 on the SPA shell). */

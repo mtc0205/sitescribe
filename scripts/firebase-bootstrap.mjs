@@ -10,14 +10,16 @@
  *      preserving any App Check keys you already filled in)
  *   4. `firebase use <project>` + `firebase firestore:databases:create`
  *   5. `npm run build` + `firebase deploy` (hosting + Firestore rules/indexes
- *      + Remote Config template)
+ *      + Remote Config template + the Authentication providers firebase.json
+ *      declares: "auth": {"providers": {"anonymous": true}} is what switches
+ *      anonymous sign-in on without the console, as Firebase documents)
  *   6. VERIFIES what it can automatically:
  *        - anonymous sign-in enabled? POST accounts:signUp with the apiKey
- *          (200 = enabled — this is the #1 console toggle people miss; a
- *          "not enabled" answer is named by its code)
+ *          (200 = enabled; a "not enabled" answer is named by its code; an
+ *          answer that tells neither is asked for once more)
  *        - hosting URL answers? fetch https://<project>.web.app
- *      then prints the steps that remain — anonymous sign-in first — and
- *      points at scripts/live-readiness.mjs for the rest
+ *      then prints what is deployed and what still needs the account's owner,
+ *      and points at scripts/live-readiness.mjs for the rest
  *      (the Gemini API free tier may be unavailable for the account).
  *
  * Usage:
@@ -34,7 +36,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseSdkConfigOutput, parseAppIdFromCreate, buildEnvFile, parseEnvFile, checkAnonymousAuth, checkHostingUrl } from "./lib/bootstrap-env.mjs";
+import { parseSdkConfigOutput, parseAppIdFromCreate, buildEnvFile, parseEnvFile, checkAnonymousAuth, checkHostingUrl, deployTargets } from "./lib/bootstrap-env.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FIREBASE_BIN = "C:\\Users\\user\\AppData\\Roaming\\npm\\node_modules\\firebase-tools\\lib\\bin\\firebase.js";
@@ -166,39 +168,55 @@ if (DEPLOY_ONLY) {
 
 /* ---------- step 5: build + deploy ---------- */
 
-log("step 5: build + deploy (hosting, firestore rules/indexes, remote-config) …");
+// What firebase.json declares decides what is deployed. `auth` is how the anonymous
+// provider was switched on without the console (2026-11-26); from then on every deploy
+// switches it back on if it was turned off there.
+let declared = null;
+try {
+  declared = JSON.parse(fs.readFileSync(path.join(ROOT, "firebase.json"), "utf8"));
+} catch {
+  declared = null;
+}
+if (!declared || typeof declared !== "object") die("firebase.json is missing or not valid JSON");
+const targets = deployTargets(declared);
+const declaredProviders = Object.keys(declared.auth?.providers ?? {}).join(", ") || "none";
+
+log(`step 5: build + deploy (${targets.join(", ")}) …`);
 if (npmBuild() !== 0) die("npm run build failed.");
-fb(["deploy", "--project", sdkConfig.projectId, "--only", "hosting,firestore:rules,firestore:indexes,remote-config", "--force"]);
+fb(["deploy", "--project", sdkConfig.projectId, "--only", targets.join(","), "--force"]);
 
 /* ---------- step 6: verification ---------- */
 
 const hostingUrl = `https://${sdkConfig.projectId}.web.app/`;
 log("step 6: verifying …");
-const anon = DRY ? { enabled: null, detail: "(dry-run)" } : await checkAnonymousAuth(sdkConfig.apiKey);
-console.log(`  anonymous sign-in: ${anon.enabled === true ? "ENABLED ✓" : anon.enabled === false ? "NOT ENABLED ✗ (console click needed)" : "unknown: " + anon.detail}`);
+const anon = DRY ? { enabled: null, code: null, detail: "(dry-run)" } : await checkAnonymousAuth(sdkConfig.apiKey);
+const anonStatus =
+  anon.enabled === true ? "ENABLED ✓" : anon.enabled === false ? `NOT ENABLED ✗ (${anon.code ?? "no code"})` : `could not tell — ${anon.detail}`;
+console.log(`  anonymous sign-in: ${anonStatus}`);
 const hosting = DRY ? { ok: null, detail: "(dry-run)" } : await checkHostingUrl(hostingUrl);
 console.log(`  hosting ${hostingUrl}: ${hosting.ok === true ? "live ✓ " + hosting.detail : hosting.ok === false ? "not answering ✗ " + hosting.detail : hosting.detail}`);
 const rcKey = !DRY && fs.existsSync(ENV_PATH) ? parseEnvFile(fs.readFileSync(ENV_PATH, "utf8")) : {};
 const appCheckSet = Boolean(rcKey.VITE_RECAPTCHA_SITE_KEY || rcKey.VITE_APPCHECK_DEBUG_TOKEN);
-console.log(`  App Check key in .env: ${appCheckSet ? "present ✓ (redeployed above)" : "absent ✗ (pick option a or b below)"}`);
 
 console.log(`
 =====================================================================
- Remaining steps (project ${sdkConfig.projectId})
+ Deployed, and what still needs the account's owner (project ${sdkConfig.projectId})
 =====================================================================
- 1. Enable anonymous sign-in — console: Authentication → Sign-in method → Anonymous → Enable → Save
-      (or, as Firebase documents: firebase init auth → pick Anonymous → firebase deploy --only auth)
-      current status: ${anon.enabled === true ? "already enabled ✓ (verified)" : anon.enabled === false ? `NOT enabled — ${anon.code ?? "do it now"}` : "not verified — do it now"}
-      Until it is done the hosted app lists no projects. (A project may have no
-      Identity Toolkit configuration yet — its owner has not opened
-      Authentication in the console; the sign-up then answers CONFIGURATION_NOT_FOUND.)
- 2. AI Logic → Gemini Developer API provider — either
+ Deployed by this script: hosting, Firestore rules + indexes, Remote Config, and
+ the Authentication providers firebase.json declares — here: ${declaredProviders}.
+ Every deploy switches a declared provider back on if it was turned off in the
+ console; to take it away for good, delete its entry from firebase.json first.
+   anonymous sign-in now: ${anonStatus}
+   App Check key in .env:  ${appCheckSet ? "present ✓" : "absent ✗ (see 2)"}
+
+ Still the owner's:
+ 1. Gemini API free tier — the AI Logic provider must be on, and the free tier may be
+    UNAVAILABLE for your Google account: every call then answers HTTP 403 "free tier
+    is not available for this project". Provider on — either
       a) CLI:  FIREBASE_CLI_EXPERIMENTS=ailogic firebase ailogic:providers:enable gemini-developer-api --project ${sdkConfig.projectId}
       b) console: AI Logic (Firebase AI) → Get started → "Gemini Developer API"
-      The Gemini API free tier may be UNAVAILABLE for your Google account: every
-      call then answers HTTP 403 "free tier is not available for this project".
-      Fix (you): https://aistudio.google.com/verify?project=${sdkConfig.projectId}  or  https://aistudio.google.com/billing
- 3. App Check (required by AI Logic, enforced since 2026-11-02). Pick ONE:
+    Fix for the free tier (you): https://aistudio.google.com/verify?project=${sdkConfig.projectId}  or  https://aistudio.google.com/billing
+ 2. App Check (required by AI Logic, enforced since 2026-11-02). Pick ONE:
       a) RECOMMENDED — real attestation for judges:
          Security → App Check → Apps → your web app → Register with
          reCAPTCHA v3 (create the site key when prompted; no billing),
@@ -210,8 +228,8 @@ console.log(`
          (or: run \`npm run dev\` on localhost, copy the "AppCheck debug token: …"
          line from the browser console, register it under App Check → Apps → ⋮
          → Manage debug tokens)
-    Then run:  node scripts/firebase-bootstrap.mjs --deploy-only
- 4. Final check:  node scripts/live-readiness.mjs
+    After 1 or 2:  node scripts/firebase-bootstrap.mjs --deploy-only
+ 3. Final check:  node scripts/live-readiness.mjs
       One command says whether the hosted app is ready and names the step that
       is still missing. Do not record before it exits 0.
 =====================================================================
