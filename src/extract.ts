@@ -64,7 +64,8 @@ export function repairJson(text: string): DefectJson {
 /**
  * F4 fallback: deterministic severity cross-check against the same reference
  * card the model prompt uses. Produces an honest, clearly-labelled answer
- * when no AI engine is reachable (offline, no device model).
+ * when no AI engine answered (offline with no device model, a hung network, or
+ * a cloud engine the project cannot use).
  */
 export function ruleBasedCrossCheck(record: DefectJson): string {
   const widths = [...(record.quantity ?? "").matchAll(/(\d+(?:\.\d+)?)\s*mm/gi)].map((m) => parseFloat(m[1]));
@@ -81,6 +82,9 @@ export function ruleBasedCrossCheck(record: DefectJson): string {
     lines.push("No width recorded — measure crack width (crack gauge/comparator) at next visit.");
   }
   const recorded = String(record.severity ?? "unknown").toLowerCase();
-  lines.push(`Recorded severity: ${recorded}. (Rule-based check — no AI engine was reachable.)`);
+  // "answered", not "was reachable": the cloud engine can be reached and still refuse —
+  // when the project cannot use the Gemini API (2026-11-26) — and the badge beside this
+  // text says so.
+  lines.push(`Recorded severity: ${recorded}. (Rule-based check — no AI engine answered.)`);
   return lines.join(" ");
 }

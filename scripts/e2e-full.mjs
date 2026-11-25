@@ -28,12 +28,21 @@
  *  - a HUNG network (e2e-23): every AI Logic request is paused and never
  *    answered, as on a blocked connection; F1–F4 must each fall back within
  *    their own budget (SPEC §9) to their own honest state
+ * and from the 2026-11-26 night shift:
+ *  - a cloud engine the project cannot use (e2e-24): the AI Logic request is
+ *    answered with the real project's HTTP 403 "free tier is not available";
+ *    F1–F4 must each name that cause in their badge, the capture must stay a
+ *    rule-based record and the report must be no report
  * Asserts the full loop; exits non-zero on any failure.
  *
  * Base URL: --url <base> or --port <n> (default http://127.0.0.1:5173, the
  * `npm run dev` port). The script refuses to run (exit 2) against a server
  * that is not SiteScribe — e.g. when the default port is taken by another
  * project: `npm run dev -- --port 5187 --strictPort` + `--port 5187`.
+ *
+ * It runs in DEMO mode. Once the repo has a `.env` with a Firebase config, the
+ * dev server would come up in live mode, so start it with the config blanked:
+ *   VITE_FIREBASE_CONFIG= npm run dev -- --port 5187 --strictPort
  */
 import puppeteer from "puppeteer-core";
 import fs from "node:fs";
@@ -708,6 +717,108 @@ check(
     /Rule-based fallback/.test(f1Rows[0].chip) &&
     !lateLog.some((r) => /Fell back to cloud|Cloud · Gemini/.test(r.chip)),
   JSON.stringify({ f1RequestsAnswered: f1Posts.length, afterLate, f1Rows, anyModelBadge: lateLog.filter((r) => /Fell back to cloud|Cloud · Gemini/.test(r.chip)) }),
+);
+
+// ---- 11. a cloud engine the project cannot use (2026-11-26) ----
+// That night the real project answered every AI Logic call with HTTP 403 "The Gemini API
+// free tier is not available for this project" — the account's standing with Google, not a
+// dead network. The same answer, the same bytes, is canned in here, so the browser SDK builds
+// the error it built against the project. Each feature must name the cause in its badge and
+// fake nothing: the capture is a rule-based record, the report is no report.
+const FREE_TIER_BODY = JSON.stringify({
+  error: {
+    code: 403,
+    message:
+      "The Gemini API free tier is not available for this project. To use the Gemini API, please set up billing to upgrade to the paid tier at https://aistudio.google.com/billing. For more information, see https://ai.google.dev/gemini-api/docs/troubleshooting#project-unavailable.",
+    status: "PERMISSION_DENIED",
+  },
+});
+const NOT_AVAILABLE = "the cloud engine is not available on this project";
+const refusedPage = await browser.newPage();
+const refusedCdp = await refusedPage.createCDPSession();
+let refusedPosts = 0;
+refusedCdp.on("Fetch.requestPaused", async (ev) => {
+  const cors = [{ name: "Access-Control-Allow-Origin", value: "*" }];
+  if (ev.request.method === "OPTIONS") {
+    await refusedCdp.send("Fetch.fulfillRequest", { requestId: ev.requestId, responseCode: 204, responseHeaders: [...cors, { name: "Access-Control-Allow-Methods", value: "POST, OPTIONS" }, { name: "Access-Control-Allow-Headers", value: ev.request.headers["Access-Control-Request-Headers"] ?? "*" }] });
+    return;
+  }
+  refusedPosts++;
+  await refusedCdp.send("Fetch.fulfillRequest", { requestId: ev.requestId, responseCode: 403, responseHeaders: [...cors, { name: "Content-Type", value: "application/json" }], body: Buffer.from(FREE_TIER_BODY).toString("base64") });
+});
+await refusedCdp.send("Fetch.enable", { patterns: [{ urlPattern: "*generateContent*", requestStage: "Request" }] });
+await refusedPage.goto(URL_BASE + "/?engine=off", { waitUntil: "load", timeout: 30000 });
+await refusedPage.waitForSelector("#project-list .card", { timeout: 30000 });
+await sleep(800);
+await refusedPage.click("#project-list .card");
+await sleep(800);
+const refusedCap = await captureOn(refusedPage, NOTE_ONLINE);
+const refusedAfterCapture = await refusedPage.evaluate(() => ({
+  previewChip: document.querySelector("#capture-result [data-testid=record-engine]")?.textContent ?? null,
+  listChip: document.querySelector("#record-list .record [data-testid=record-engine]")?.textContent ?? null,
+  chip: document.querySelector("#engine-chip")?.textContent ?? null,
+  stored: (JSON.parse(localStorage.getItem("sitescribe.v1") ?? "{}").records?.[0] ?? null),
+}));
+await refusedPage.screenshot({ path: SHOTS + "\\e2e-24-refused-cloud-capture.png" });
+await refusedPage.click("#record-list .record .check-btn");
+await refusedPage.type("#qa-input", "What does efflorescence usually indicate?");
+await refusedPage.click("#qa-btn");
+await refusedPage.click("#report-btn");
+const refusedRest = await poll(
+  refusedPage,
+  () => {
+    const f4 = document.querySelector("#record-list .record .check-out")?.textContent ?? "";
+    const f2 = document.querySelector("#qa-out .ai-head .chip")?.textContent ?? "";
+    const f3 = document.querySelector("#report-out .ai-head .chip")?.textContent ?? "";
+    return f4 && !/checking/.test(f4) && f2 && f3
+      ? {
+          f4,
+          f4Badge: document.querySelector("#record-list .record .check-out .chip")?.textContent ?? null,
+          f2,
+          f2Text: document.querySelector("#qa-out .ai-body")?.textContent ?? null,
+          f3,
+          f3Report: !!document.querySelector("#report-out .report, #report-out .report-actions"),
+        }
+      : null;
+  },
+  { timeoutMs: 20_000 },
+);
+await refusedPage.screenshot({ path: SHOTS + "\\e2e-24b-refused-cloud-f2-f3-f4.png", fullPage: true });
+await refusedPage.click("#back");
+await refusedPage.waitForSelector("#engine-panel");
+await refusedPage.click("#engine-panel > summary");
+const refusedLog = await refusedPage.evaluate(() =>
+  [...document.querySelectorAll("#engine-log-list .log-row")].map((r) => ({ feature: r.querySelector("code")?.textContent.trim() ?? "", chip: r.querySelector(".chip")?.textContent.replace(/\s+/g, " ").trim() ?? "" })),
+);
+const rowFor = (feature) => refusedLog.find((r) => r.feature === feature)?.chip ?? null;
+const { stored: refusedStored, ...refusedShown } = refusedAfterCapture;
+check(
+  "refused cloud · capture: the badge and the status chip name the cause, and the record is rule-based",
+  refusedCap.badge === `⚙ Rule-based fallback (${NOT_AVAILABLE})` &&
+    refusedAfterCapture.chip === `⚙ Rule-based (cloud not available on this project)` &&
+    refusedAfterCapture.previewChip === "⚙ rule-based" &&
+    refusedAfterCapture.listChip === "⚙ rule-based" &&
+    refusedStored?.extractedBy === "rule_based" &&
+    refusedStored?.component === "girder G2", // the rules' wording — no model produced these fields
+  JSON.stringify({ badge: refusedCap.badge, ...refusedShown, extractedBy: refusedStored?.extractedBy, component: refusedStored?.component }),
+);
+check(
+  "refused cloud · severity check, Q&A and report each name the cause; no report is offered",
+  !!refusedRest &&
+    refusedRest.f4Badge === `⚙ Rule-based fallback (${NOT_AVAILABLE})` &&
+    /Rule-based check/.test(refusedRest.f4) &&
+    refusedRest.f2 === `⚙ No engine reachable (${NOT_AVAILABLE})` &&
+    /the cloud engine is not available on this project/.test(refusedRest.f2Text ?? "") &&
+    refusedRest.f3 === `⚙ Report drafting unavailable — ${NOT_AVAILABLE}` &&
+    refusedRest.f3Report === false,
+  JSON.stringify(refusedRest),
+);
+check(
+  "refused cloud · every engine-log row of the four calls names the cause, and no cloud badge was ever shown",
+  refusedPosts === 4 &&
+    [rowFor("F1 structure"), rowFor("F4 severity check"), rowFor("F2 field QA"), rowFor("F3 report")].every((c) => !!c && c.includes(NOT_AVAILABLE)) &&
+    !refusedLog.some((r) => /Fell back to cloud|Cloud · Gemini|no AI engine reachable/.test(r.chip)),
+  JSON.stringify({ refusedPosts, refusedLog }),
 );
 } catch (e) {
   check("e2e-full ran to completion", false, String(e));
