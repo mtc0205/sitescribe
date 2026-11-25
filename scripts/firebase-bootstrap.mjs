@@ -16,8 +16,8 @@
  *          (200 = enabled — this is the #1 console toggle people miss; a
  *          "not enabled" answer is named by its code)
  *        - hosting URL answers? fetch https://<project>.web.app
- *      then prints the steps that remain — the console-only Authentication
- *      step first — and points at scripts/live-readiness.mjs for the rest
+ *      then prints the steps that remain — anonymous sign-in first — and
+ *      points at scripts/live-readiness.mjs for the rest
  *      (the Gemini API free tier may be unavailable for the account).
  *
  * Usage:
@@ -184,12 +184,14 @@ console.log(`  App Check key in .env: ${appCheckSet ? "present ✓ (redeployed a
 
 console.log(`
 =====================================================================
- Remaining steps (Firebase console → project ${sdkConfig.projectId})
+ Remaining steps (project ${sdkConfig.projectId})
 =====================================================================
- 1. YOU, in the console — Authentication → Sign-in method → Anonymous → Enable → Save
+ 1. Enable anonymous sign-in — console: Authentication → Sign-in method → Anonymous → Enable → Save
+      (or, as Firebase documents: firebase init auth → pick Anonymous → firebase deploy --only auth)
       current status: ${anon.enabled === true ? "already enabled ✓ (verified)" : anon.enabled === false ? `NOT enabled — ${anon.code ?? "do it now"}` : "not verified — do it now"}
-      Console only: until it is done the project has no Identity Toolkit
-      configuration, and the hosted app lists no projects.
+      Until it is done the hosted app lists no projects. (A project may have no
+      Identity Toolkit configuration yet — its owner has not opened
+      Authentication in the console; the sign-up then answers CONFIGURATION_NOT_FOUND.)
  2. AI Logic → Gemini Developer API provider — either
       a) CLI:  FIREBASE_CLI_EXPERIMENTS=ailogic firebase ailogic:providers:enable gemini-developer-api --project ${sdkConfig.projectId}
       b) console: AI Logic (Firebase AI) → Get started → "Gemini Developer API"
