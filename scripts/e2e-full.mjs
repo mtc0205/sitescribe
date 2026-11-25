@@ -582,7 +582,7 @@ check(
 const hungPage = await openPage("?engine=off");
 const hangCdp = await hungPage.createCDPSession();
 const hung = [];
-hangCdp.on("Fetch.requestPaused", (ev) => hung.push({ id: ev.requestId, method: ev.request.method, url: ev.request.url }));
+hangCdp.on("Fetch.requestPaused", (ev) => hung.push({ id: ev.requestId, method: ev.request.method, url: ev.request.url, postData: ev.request.postData ?? "", askHeaders: ev.request.headers["Access-Control-Request-Headers"] ?? "*" }));
 await hangCdp.send("Fetch.enable", { patterns: [{ urlPattern: "*generateContent*", requestStage: "Request" }] });
 await hungPage.click("#project-list .card");
 await hungPage.waitForSelector("#note");
@@ -646,8 +646,53 @@ check(
     !/report-actions|class="report"/.test(hungState.f3Body),
   JSON.stringify(hungState),
 );
-// Let the hung requests fail now; the page is done.
-for (const h of hung) await hangCdp.send("Fetch.failRequest", { requestId: h.id, errorReason: "TimedOut" }).catch(() => {});
+// The hung network answers after all — too late. The F1 request gets a perfectly good
+// model reply (through the real SDK, so it carries a cloud engine badge); every other
+// request simply fails. Until 2026-11-25 that late reply took the status chip and the
+// engine log with the model's badge, over the rule-based record that was already saved.
+const CORS = (h) => [
+  { name: "Access-Control-Allow-Origin", value: "*" },
+  { name: "Access-Control-Allow-Methods", value: "POST, OPTIONS" },
+  { name: "Access-Control-Allow-Headers", value: h.askHeaders },
+];
+const f1Posts = hung.filter((h) => h.method === "POST" && /Engineer's note/.test(h.postData));
+for (const h of hung) {
+  if (h.method === "OPTIONS") await hangCdp.send("Fetch.fulfillRequest", { requestId: h.id, responseCode: 204, responseHeaders: CORS(h) }).catch(() => {});
+  else if (f1Posts.includes(h)) {
+    const lateReply = { component: "web of girder G2", defectType: "longitudinal crack", quantity: "~2mm wide, ~3m long", severity: "moderate", notes: "late reply" };
+    const body = { candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify(lateReply) }] }, finishReason: "STOP", index: 0 }] };
+    await hangCdp.send("Fetch.fulfillRequest", { requestId: h.id, responseCode: 200, responseHeaders: [...CORS(h), { name: "Content-Type", value: "application/json" }], body: Buffer.from(JSON.stringify(body)).toString("base64") }).catch(() => {});
+  } else await hangCdp.send("Fetch.failRequest", { requestId: h.id, errorReason: "TimedOut" }).catch(() => {});
+}
+await sleep(2500);
+const afterLate = await hungPage.evaluate(() => {
+  const newest = JSON.parse(localStorage.getItem("sitescribe.v1") ?? "{}").records?.[0];
+  return {
+    previewChip: document.querySelector("#capture-result [data-testid=record-engine]")?.textContent ?? null,
+    previewBadge: document.querySelector("#capture-result .ai-head .chip")?.textContent ?? null,
+    chip: document.querySelector("#engine-chip")?.textContent ?? null,
+    stored: newest ? { extractedBy: newest.extractedBy, component: newest.component } : null,
+  };
+});
+await hungPage.click("#back");
+await hungPage.waitForSelector("#engine-panel");
+await hungPage.click("#engine-panel > summary");
+const lateLog = await hungPage.evaluate(() =>
+  [...document.querySelectorAll("#engine-log-list .log-row")].map((r) => ({ feature: r.querySelector("code")?.textContent.trim() ?? "", chip: r.querySelector(".chip")?.textContent.replace(/\s+/g, " ").trim() ?? "" })),
+);
+const f1Rows = lateLog.filter((r) => r.feature === "F1 structure");
+check(
+  "late reply · a model reply that arrives after the F1 budget changes nothing: record, chips and log stay as the fallback left them",
+  f1Posts.length === 1 &&
+    afterLate.previewChip === "⚙ rule-based" &&
+    afterLate.stored?.extractedBy === "rule_based" &&
+    afterLate.stored?.component === "girder G2" && // the rules' wording, not the late reply's
+    afterLate.chip === hungState.chip &&
+    f1Rows.length === 1 &&
+    /Rule-based fallback/.test(f1Rows[0].chip) &&
+    !lateLog.some((r) => /Fell back to cloud|Cloud · Gemini/.test(r.chip)),
+  JSON.stringify({ f1RequestsAnswered: f1Posts.length, afterLate, f1Rows, anyModelBadge: lateLog.filter((r) => /Fell back to cloud|Cloud · Gemini/.test(r.chip)) }),
+);
 } catch (e) {
   check("e2e-full ran to completion", false, String(e));
 } finally {

@@ -11,8 +11,8 @@ import {
   SYSTEM,
   badgeFromSource,
   hybridModelParams,
-  settleStructureReply,
   answerWithinBudget,
+  structureWithinBudget,
   fieldQaWithoutEngine,
   reportWithoutEngine,
   severityWithoutEngine,
@@ -317,55 +317,31 @@ async function generate(
   return { text: result.response.text(), badge };
 }
 
-/** `generate` plus the engine event of its reply — for a call whose reply is used come what may. */
-async function ask(
-  mode: (typeof InferenceMode)[keyof typeof InferenceMode],
-  prompt: string,
-  options: { responseMimeType?: string; responseSchema?: object; temperature?: number } = {},
-  requestedOnDevice = true,
-  feature = "ai",
-): Promise<AiAnswer> {
-  const answer = await generate(mode, prompt, options, requestedOnDevice);
-  emitEngine(answer.badge, feature);
-  return answer;
-}
-
-/** F1 — free-text field note → structured defect record (JSON). On-device first. */
+/** F1 — free-text field note → structured defect record (JSON). On-device first, under a
+ *  budget (aiBudgetMs): a hung network falls through to the rules like a failed one, and a
+ *  reply that comes too late is dropped (structureWithinBudget, engine.ts). */
 export async function structureNote(note: string): Promise<{ record: DefectJson; answer: AiAnswer }> {
-  try {
-    // Race the AI call against a timeout so an unreachable cloud doesn't hang
-    // the capture flow in the field (worst case: fall through to rules).
-    // Demo mode (placeholder config) has no real cloud: fail fast to rules.
-    const budgetMs = await aiBudgetMs();
-    const answer = await Promise.race([
-      ask(
+  const budgetMs = await aiBudgetMs();
+  return structureWithinBudget(
+    () =>
+      generate(
         InferenceMode.PREFER_ON_DEVICE,
         `${STRUCTURE_PROMPT}\n\nEngineer's note:\n${note}`,
         { responseMimeType: "application/json", responseSchema: DEFECT_SCHEMA, temperature: 0.1 },
         true,
-        "F1 structure",
       ),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`AI call timed out (${Math.round(budgetMs / 1000)}s)`)), budgetMs)),
-    ]);
-    // The badge that is true for the record is not always the one the reply
-    // carried: a reply that is not usable JSON leaves the fields to the rules,
-    // and the record — and every chip on it — then says rule-based, while its
-    // notes say that the engine did answer (engine.ts, SPEC §5.1 and §6.1).
-    const outcome = settleStructureReply(answer.text, answer.badge, note);
-    if (!outcome.fromModel) emitEngine(outcome.badge, "F1 structure");
-    return { record: outcome.record, answer: outcome.fromModel ? answer : { ...answer, badge: outcome.badge } };
-  } catch (e) {
-    // Honest degradation: no on-device model AND no cloud reachability
-    // (e.g. offline demo without a Firebase project). Structure the note with
-    // transparent rules — the badge says so; we never pretend AI ran.
-    console.warn("[ai] structuring failed, using rule-based fallback:", e);
-    const badge: EngineBadgeInfo = { engine: "unavailable", label: "Rule-based fallback (no AI engine reachable)", short: "Rule-based fallback" };
-    emitEngine(badge, "F1 structure");
-    return { record: ruleBasedStructure(note), answer: { text: "", badge } };
-  }
+    note,
+    budgetMs,
+    (a) => emitEngine(a.badge, "F1 structure"),
+    {
+      onLate: () => console.warn("[ai] a structuring reply arrived after the budget was lost — dropped; the record is already rule-based"),
+      // Honest degradation: no on-device model AND no cloud reachability
+      // (e.g. offline demo without a Firebase project). Structure the note with
+      // transparent rules — the badge says so; we never pretend AI ran.
+      onFallback: (e) => console.warn("[ai] structuring failed, using rule-based fallback:", e),
+    },
+  );
 }
-
-;
 
 /** F2 — on-site single-turn Q&A. On-device first. Under a budget (callBudgetMs): a hung
  *  network ends in "No engine answered in time", a failed one in "No engine reachable". */

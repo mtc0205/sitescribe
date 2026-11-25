@@ -245,3 +245,34 @@ export function severityWithoutEngine(record: DefectJson, _reason: unknown): AiA
     badge: { engine: "unavailable", label: "Rule-based fallback (no AI engine reachable)", short: "Rule-based fallback" },
   };
 }
+
+/* ---------- F1 under a budget ---------- */
+
+/**
+ * Structuring a note under a budget. Exactly one engine event, for the badge that is true
+ * for the record the user gets: the model's when its fields are used, "Rule-based (…
+ * replied, but not with usable JSON)" when they are not, the fallback's when nothing
+ * answered in time. A reply that arrives after the budget was lost is dropped: until
+ * 2026-11-25 it still took the status chip and the engine log with the model's badge,
+ * over the rule-based record that had already been saved.
+ */
+export async function structureWithinBudget(
+  call: () => Promise<AiAnswer>,
+  note: string,
+  budgetMs: number,
+  emit: (answer: AiAnswer) => void,
+  hooks: { onLate?: (late: LateReply<AiAnswer>) => void; onFallback?: (reason: unknown) => void } = {},
+): Promise<{ record: DefectJson; answer: AiAnswer }> {
+  try {
+    const reply = await withinBudget(call(), budgetMs, hooks.onLate);
+    const outcome = settleStructureReply(reply.text, reply.badge, note);
+    const answer = outcome.fromModel ? reply : { ...reply, badge: outcome.badge };
+    emit(answer);
+    return { record: outcome.record, answer };
+  } catch (e) {
+    hooks.onFallback?.(e);
+    const answer: AiAnswer = { text: "", badge: { engine: "unavailable", label: "Rule-based fallback (no AI engine reachable)", short: "Rule-based fallback" } };
+    emit(answer);
+    return { record: ruleBasedStructure(note), answer };
+  }
+}
