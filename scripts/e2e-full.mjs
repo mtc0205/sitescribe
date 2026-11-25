@@ -171,6 +171,33 @@ if (checkBtn) {
   }
   check("F4 severity check returns an answer offline", !!f4 && f4.length > 20, (f4 ?? "").slice(0, 90));
   await page.screenshot({ path: SHOTS + "\\e2e-12-f4-check-offline.png" });
+  // The button on the capture preview card does the same. Until 2026-11-25 it had no
+  // click handler: clicking it did nothing at all.
+  const previewCheck = await page.$("#capture-result .check-btn");
+  const previewBefore = await page.evaluate(() => document.querySelector("#capture-result .check-out")?.textContent ?? "");
+  if (previewCheck) {
+    // Centred in the viewport first: puppeteer's own scrollIntoView puts the element at the
+    // top edge, under the sticky top bar, where the click would land on the bar.
+    await page.evaluate(() => document.querySelector("#capture-result .check-btn")?.scrollIntoView({ block: "center" }));
+    await sleep(300);
+    await previewCheck.click();
+  }
+  const f4fromPreview = previewCheck
+    ? await poll(
+        page,
+        () => {
+          const out = document.querySelector("#capture-result .check-out")?.textContent ?? "";
+          return out && !/checking/.test(out) ? out.replace(/\s+/g, " ").trim() : null;
+        },
+        { timeoutMs: 40_000 },
+      )
+    : null;
+  check(
+    "the Check severity button on the capture preview answers too (it used to do nothing)",
+    !!previewCheck && previewBefore === "" && !!f4fromPreview && /Rule-based check/.test(f4fromPreview),
+    `${previewCheck ? "button found; empty before the click; " : "no button on the preview; "}${(f4fromPreview ?? "no answer").slice(0, 80)}`,
+  );
+  await page.screenshot({ path: SHOTS + "\\e2e-12b-f4-check-from-preview.png" });
 } else {
   check("F4 check button present", false, "no .check-btn in record list");
 }

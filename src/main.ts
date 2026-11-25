@@ -562,10 +562,29 @@ async function onCapture(): Promise<void> {
     noteEl.value = "";
     // Swap the preview card for the saved one (now with sync state).
     out.querySelector(".ai-body")!.innerHTML = recordCardHtml(saved, note, false, true);
+    // Its severity-check button does what the ones in the Records list do. Until
+    // 2026-11-25 it had no handler at all and simply did nothing.
+    const previewBtn = out.querySelector<HTMLButtonElement>(".check-btn");
+    const previewOut = out.querySelector<HTMLElement>(".check-out");
+    if (previewBtn && previewOut) previewBtn.addEventListener("click", () => runSeverityCheck(saved, previewOut));
     void refreshRecords();
   } catch (e) {
     stateEl.textContent = "";
     out.innerHTML = `<div class="ai-block error">Capture failed: ${escapeHtml(String(e))}</div>`;
+  }
+}
+
+/** F4 for one record card: the severity cross-check, its badge and its text into `out`.
+ *  Used by the buttons in the Records list and by the one on the capture preview. */
+async function runSeverityCheck(rec: DefectRecord, out: HTMLElement): Promise<void> {
+  // Switched off by Remote Config: the button is disabled anyway — and no request leaves.
+  if (!gate("severityCheck").offered) return;
+  out.textContent = "checking…";
+  try {
+    const answer = await crossCheckSeverity(rec);
+    out.innerHTML = badgeHtml(answer.badge) + `<div class="check-text">${escapeHtml(answer.text)}</div>`;
+  } catch (e) {
+    out.textContent = `failed: ${String(e)}`;
   }
 }
 
@@ -626,22 +645,14 @@ async function refreshRecords(): Promise<void> {
     ? records.map((r) => recordCardHtml(r, r.rawNote, true, true)).join("")
     : `<div class="empty">No records yet — type a field note above and hit <strong>⚡ Capture</strong>. It works offline; records sync when you're back in range.</div>`;
 
-  // Wire severity cross-check buttons (F4, on-device).
+  // Wire severity cross-check buttons (F4, on-device) — the same action as on the capture preview.
   list.querySelectorAll(".record").forEach((el, i) => {
     const btn = el.querySelector(".check-btn") as HTMLButtonElement | null;
     if (!btn) return;
     const rec = records[i];
-    btn.addEventListener("click", async () => {
-      // Switched off by Remote Config: the button is disabled anyway — and no request leaves.
-      if (!gate("severityCheck").offered) return;
+    btn.addEventListener("click", () => {
       const out = el.querySelector(".check-out") as HTMLElement;
-      out.textContent = "checking…";
-      try {
-        const answer = await crossCheckSeverity(rec);
-        out.innerHTML = badgeHtml(answer.badge) + `<div class="check-text">${escapeHtml(answer.text)}</div>`;
-      } catch (e) {
-        out.textContent = `failed: ${String(e)}`;
-      }
+      void runSeverityCheck(rec, out);
     });
   });
 }
