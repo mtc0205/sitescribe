@@ -13,9 +13,12 @@
  *      + Remote Config template)
  *   6. VERIFIES what it can automatically:
  *        - anonymous sign-in enabled? POST accounts:signUp with the apiKey
- *          (200 = enabled — this is the #1 console toggle people miss)
+ *          (200 = enabled — this is the #1 console toggle people miss; a
+ *          "not enabled" answer is named by its code)
  *        - hosting URL answers? fetch https://<project>.web.app
- *      then prints the remaining console clicks with exact navigation paths.
+ *      then prints the steps that remain — the console-only Authentication
+ *      step first — and points at scripts/live-readiness.mjs for the rest
+ *      (the Gemini API free tier may be unavailable for the account).
  *
  * Usage:
  *   node scripts/firebase-bootstrap.mjs                 # full flow
@@ -181,29 +184,34 @@ console.log(`  App Check key in .env: ${appCheckSet ? "present ✓ (redeployed a
 
 console.log(`
 =====================================================================
- Remaining console clicks (Firebase console → project ${sdkConfig.projectId})
+ Remaining steps (Firebase console → project ${sdkConfig.projectId})
 =====================================================================
- 1. Authentication → Sign-in method → Anonymous → Enable → Save        (~40s)
-      current status: ${anon.enabled === true ? "already enabled ✓ (verified)" : "NOT enabled — do it now"}
- 2. AI Logic (Firebase AI) → Get started → continue with the
-    "Gemini Developer API" provider → Create/Use API key               (~40s)
-    (text inference is free within usage limits; no card needed)
- 3. App Check (required by AI Logic, enforced since 2026-11-02).
-    Pick ONE:
+ 1. YOU, in the console — Authentication → Sign-in method → Anonymous → Enable → Save
+      current status: ${anon.enabled === true ? "already enabled ✓ (verified)" : anon.enabled === false ? `NOT enabled — ${anon.code ?? "do it now"}` : "not verified — do it now"}
+      Console only: until it is done the project has no Identity Toolkit
+      configuration, and the hosted app lists no projects.
+ 2. AI Logic → Gemini Developer API provider — either
+      a) CLI:  FIREBASE_CLI_EXPERIMENTS=ailogic firebase ailogic:providers:enable gemini-developer-api --project ${sdkConfig.projectId}
+      b) console: AI Logic (Firebase AI) → Get started → "Gemini Developer API"
+      The Gemini API free tier may be UNAVAILABLE for your Google account: every
+      call then answers HTTP 403 "free tier is not available for this project".
+      Fix (you): https://aistudio.google.com/verify?project=${sdkConfig.projectId}  or  https://aistudio.google.com/billing
+ 3. App Check (required by AI Logic, enforced since 2026-11-02). Pick ONE:
       a) RECOMMENDED — real attestation for judges:
          Security → App Check → Apps → your web app → Register with
          reCAPTCHA v3 (create the site key when prompted; no billing),
          copy the SITE key into .env as VITE_RECAPTCHA_SITE_KEY=…
-      b) Debug token (explicitly accepted by the hackathon rules):
-         run \`npm run dev\` locally, open the URL vite prints
-         (http://127.0.0.1:5173 — if another project holds that port, vite
-         moves to the next free one and the page must say "SiteScribe"), copy the
-         "AppCheck debug token: …" line from the browser console, register
-         it (App Check → Apps → ⋮ → Manage debug tokens), paste it into
-         .env as VITE_APPCHECK_DEBUG_TOKEN=…
+      b) Debug token (accepted by the hackathon rules — but it ends up in the
+         PUBLIC bundle, so it attests nothing about who calls):
+         firebase appcheck:debugtokens:create <uuid> --app ${sdkConfig.appId ?? "<appId>"} --display-name <name> --no-save-local
+         → paste the token into .env as VITE_APPCHECK_DEBUG_TOKEN=…
+         (or: run \`npm run dev\` on localhost, copy the "AppCheck debug token: …"
+         line from the browser console, register it under App Check → Apps → ⋮
+         → Manage debug tokens)
     Then run:  node scripts/firebase-bootstrap.mjs --deploy-only
- 4. Final check: open ${hostingUrl} — capture a record; the badge should
-    show a real engine (not rule-based) once App Check is set up.
+ 4. Final check:  node scripts/live-readiness.mjs
+      One command says whether the hosted app is ready and names the step that
+      is still missing. Do not record before it exits 0.
 =====================================================================
 Hosted URL: ${hostingUrl}
 `);

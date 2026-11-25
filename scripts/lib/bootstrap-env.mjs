@@ -2,6 +2,7 @@
  * Pure helpers for scripts/firebase-bootstrap.mjs — kept free of any
  * side-effects so they can be unit-tested (tests/bootstrap-env.test.mjs).
  */
+import { classifyAnonymousReply } from "./live-readiness.mjs";
 
 /**
  * Extract the web SDK config object from `firebase apps:sdkconfig` output.
@@ -89,8 +90,11 @@ export function parseAppIdFromCreate(text) {
 /**
  * Check whether anonymous sign-in is enabled for a project, using the public
  * Identity Toolkit REST endpoint (no admin credentials needed):
- * 200            → enabled   (an anonymous user was actually created)
- * 400 + code     → disabled (ADMIN_ONLY_OPERATION / OPERATION_NOT_ALLOWED …)
+ * 200                   → enabled   (an anonymous user was actually created)
+ * a "not enabled" code → disabled, and `code` says which (CONFIGURATION_NOT_FOUND,
+ *                        ADMIN_ONLY_OPERATION, OPERATION_NOT_ALLOWED — the decision is
+ *                        classifyAnonymousReply's, shared with live-readiness.mjs)
+ * anything else         → could not tell (a bad key is not "disabled")
  */
 export async function checkAnonymousAuth(apiKey) {
   try {
@@ -101,10 +105,11 @@ export async function checkAnonymousAuth(apiKey) {
       signal: AbortSignal.timeout(10_000),
     });
     const body = await r.json().catch(() => ({}));
-    if (r.status === 200) return { enabled: true, detail: `signed up uid=${body.localId}` };
-    return { enabled: false, detail: `HTTP ${r.status} ${body.error?.message ?? ""}`.trim() };
+    const verdict = classifyAnonymousReply(r.status, body);
+    if (verdict.enabled === true) return { enabled: true, code: null, detail: `signed up uid=${body.localId}` };
+    return { enabled: verdict.enabled, code: verdict.code, detail: verdict.detail };
   } catch (e) {
-    return { enabled: null, detail: String(e) };
+    return { enabled: null, code: null, detail: String(e) };
   }
 }
 
