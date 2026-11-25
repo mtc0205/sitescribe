@@ -2,7 +2,7 @@
  * SiteScribe UI — single-page, vanilla TypeScript.
  * Every AI output renders next to an EngineBadge driven by real SDK telemetry.
  */
-import { initFirebase, runtime, remoteToggles } from "./firebase";
+import { initFirebase, runtime, remoteToggles, authReady, getAuthState, onRemoteTogglesChange } from "./firebase";
 import { structureNote, askFieldQuestion, draftReport, crossCheckSeverity, warmDeviceModel, deviceAvailability, onEngineUpdate, deviceApiAvailable, initEngineSimulationFromUrl, engineSimulation, getEngineLog } from "./ai";
 import { store, seedIfEmpty, onStoreChange } from "./store";
 import { ruleBasedStructure } from "./extract";
@@ -343,10 +343,22 @@ function refreshEngineLog(): void {
   renderDiagSummary();
 }
 
+/** The Projects panel. In live and emulator mode it needs the anonymous user — who may still
+ *  be signing in, because the first render never waits for the network (firebase.ts) — so
+ *  it says that instead of pretending there are no projects. */
 async function refreshProjects(): Promise<void> {
-  const projects = await store.listProjects();
   const list = document.querySelector("#project-list");
   if (!list) return;
+  const auth = getAuthState();
+  if (auth.state === "pending") {
+    list.innerHTML = `<div class="empty" data-testid="auth-state">Signing in anonymously…</div>`;
+    return;
+  }
+  if (auth.state === "failed") {
+    list.innerHTML = `<div class="empty" data-testid="auth-state">Could not sign in (${escapeHtml(auth.error.slice(0, 160))}) — projects and records need the anonymous sign-in. Check the connection and reload the page.</div>`;
+    return;
+  }
+  const projects = await store.listProjects();
   if (!projects.length) {
     list.innerHTML = `<div class="empty">No projects yet — tap <strong>＋ New</strong> to inspect your first structure.</div>`;
     return;
@@ -368,6 +380,13 @@ function structureLabel(t: Project["structureType"]): string {
 }
 
 async function onNewProject(): Promise<void> {
+  // A project needs an owner. The sign-in is not awaited for the first render, so it may
+  // still be under way — or have failed on an unreachable network.
+  const auth = getAuthState();
+  if (auth.state === "pending" || auth.state === "failed") {
+    alert(auth.state === "pending" ? "Still signing in — try again in a moment." : "Not signed in: projects cannot be saved without the anonymous sign-in. Check the connection and reload the page.");
+    return;
+  }
   const name = prompt("Project name (e.g. Girder Bridge No.3):");
   if (!name) return;
   const type = (prompt("Structure type: bridge / tunnel / hydraulic / other:", "bridge") ?? "bridge").toLowerCase();
@@ -434,6 +453,47 @@ function renderSession(): void {
 
   void refreshRecords();
 }
+
+/** Bring Remote Config switches that arrived AFTER the session view was built (the fetch
+ *  is not awaited for the first render, see firebase.ts) to that existing view. The
+ *  templates apply the switches at build time; this does it in place — never by
+ *  re-rendering, a half-typed note must survive. */
+function applyFeatureGates(): void {
+  if (!activeProject) return;
+  const report = gate("reportDrafting");
+  const severity = gate("severityCheck");
+  const reportBtn = document.querySelector<HTMLButtonElement>("#report-btn");
+  if (reportBtn) {
+    reportBtn.disabled = !report.offered;
+    reportBtn.title = report.offered ? "" : report.detail;
+  }
+  document.querySelectorAll<HTMLButtonElement>(".check-btn").forEach((b) => {
+    b.disabled = !severity.offered;
+    b.title = severity.offered ? "" : severity.detail;
+  });
+  setSwitchLine("report-flag-off", report);
+  setSwitchLine("severity-flag-off", severity);
+}
+
+/** The one-line explanation under the Records header for a switched-off feature — or
+ *  nothing when the feature is offered. */
+function setSwitchLine(testId: "report-flag-off" | "severity-flag-off", g: FeatureGate): void {
+  let el = document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+  if (g.offered) {
+    el?.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement("p");
+    el.className = "muted flag-off";
+    el.id = testId;
+    el.setAttribute("data-testid", testId);
+    document.querySelector("#record-list")?.before(el);
+  }
+  el.textContent = g.explanation;
+}
+
+onRemoteTogglesChange(() => applyFeatureGates());
 
 async function ensureWarm(): Promise<void> {
   if (deviceWarmed) return;
@@ -691,9 +751,21 @@ function escapeHtml(s: string): string {
 
 (async () => {
   initEngineSimulationFromUrl();
+  // Never waits for the network: the anonymous sign-in and the Remote Config fetch
+  // run on in the background (firebase.ts).
   await initFirebase();
-  await seedIfEmpty();
-  render();
+  if (runtime.mode === "demo") await seedIfEmpty(); // localStorage: instant
+  render(); // the home view, on the default switches
+  // Live and emulator mode: the demo seeds and the owner's projects need the
+  // anonymous user. They follow as soon as that user exists — typically within
+  // a moment, and whatever the network does.
+  if (runtime.mode !== "demo") {
+    void authReady.then(async () => {
+      await seedIfEmpty();
+      if (!activeProject) await refreshProjects();
+      // A sign-in failure is stated in the Projects panel (refreshProjects).
+    }, () => {});
+  }
   // Preload an already-installed on-device model so the first capture does not
   // wait for the weights to load. This never starts a download — that still
   // needs the user's click (see ensureWarm).

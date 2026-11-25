@@ -165,6 +165,12 @@ export function initAI(ai: AI, remoteCloudModel?: string): void {
   if (remoteCloudModel) cloudModelName = remoteCloudModel;
 }
 
+/** A cloud model name that arrived after the AI service was bound (Remote Config is not
+ *  awaited for the first render, see firebase.ts). Applies from the next call on. */
+export function setCloudModel(name: string): void {
+  if (name) cloudModelName = name;
+}
+
 function requireModel(mode: (typeof InferenceMode)[keyof typeof InferenceMode]): GenerativeModel {
   if (!aiService) throw new Error("AI service not initialized (no Firebase config)");
   // The cloud model is the fallback target of PREFER_ON_DEVICE and the engine of

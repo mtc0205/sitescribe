@@ -1,20 +1,26 @@
 /**
  * Firebase bootstrap.
  *
- * Two modes:
+ * Three modes:
  * - **Live**: a real `VITE_FIREBASE_CONFIG` is provided (production hosting or
  *   a local `.env`). Auth (anonymous) + Firestore + Remote Config + AI Logic.
  * - **Demo**: no config → skip all Firebase services; the app runs fully local
  *   (localStorage persistence, AI on-device path still available through the
  *   Chrome Prompt API because it never leaves the device).
+ * - **Emulator** (`VITE_USE_EMULATOR=1`, no config): the real SDKs against the
+ *   local Emulator Suite.
  *
- * Emulator mode (`VITE_USE_EMULATOR=1`) points Auth/Firestore at localhost
- * for development without touching production data.
+ * Nothing that needs the network is awaited before the first render. The
+ * anonymous sign-in and the Remote Config fetch run in the background: the UI
+ * renders at once on the baked-in defaults, lists the owner's data once the
+ * user exists (authReady), and applies fetched values when they arrive. Until
+ * 2026-11-25 both were awaited, and with Google's endpoints unreachable the
+ * page stayed blank for 85 s (SPEC §10, §13).
  */
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import { getAI, GoogleAIBackend } from "firebase/ai";
-import { initAI } from "./ai";
-import { parseFlagOverrides, DEFAULT_CLOUD_MODEL } from "./flags";
+import { initAI, setCloudModel } from "./ai";
+import { parseFlagOverrides, DEFAULT_CLOUD_MODEL, FEATURE_DEFAULTS } from "./flags";
 
 const EMULATOR = import.meta.env.VITE_USE_EMULATOR === "1";
 const RAW_CONFIG = import.meta.env.VITE_FIREBASE_CONFIG as string | undefined;
@@ -43,6 +49,81 @@ function parseConfig(): Record<string, string> | null {
     return null;
   }
 }
+
+/* ---------- state the background work feeds ---------- */
+
+const cachedToggles: RemoteToggles = {
+  cloudModel: DEFAULT_CLOUD_MODEL,
+  featureReportDrafting: FEATURE_DEFAULTS.reportDrafting,
+  featureSeverityCheck: FEATURE_DEFAULTS.severityCheck,
+};
+
+/** The Remote Config values in force: the baked-in defaults until a fetch says otherwise
+ *  (in demo mode, until the demo-only URL flag does — see initFirebase). Read by the UI
+ *  through featureGate() in flags.ts. */
+export function remoteToggles(): RemoteToggles {
+  return { ...cachedToggles };
+}
+
+type TogglesListener = (toggles: RemoteToggles) => void;
+const togglesListeners = new Set<TogglesListener>();
+
+/** Told whenever the values in force change — i.e. when a Remote Config fetch arrives after
+ *  the first render. The UI updates the switched controls in place (it must not re-render:
+ *  a half-typed note has to survive). */
+export function onRemoteTogglesChange(fn: TogglesListener): () => void {
+  togglesListeners.add(fn);
+  return () => togglesListeners.delete(fn);
+}
+
+function publishRemoteToggles(): void {
+  (globalThis as { __ssRemoteToggles?: RemoteToggles }).__ssRemoteToggles = { ...cachedToggles };
+  togglesListeners.forEach((fn) => fn({ ...cachedToggles }));
+}
+
+/** How long the app lets a Remote Config fetch take before it counts as settled and goes
+ *  with what it has (the defaults, as a rule). A value that arrives later is still applied.
+ *  The SDK's own fetch timeout does not cover the Installations registration that precedes
+ *  the fetch — that request hung for 84.5 s on 2026-11-25. */
+export const REMOTE_CONFIG_TIMEOUT_MS = 5_000;
+
+export interface RemoteConfigStatus {
+  /** True once the fetch settled, failed, or ran out of REMOTE_CONFIG_TIMEOUT_MS. */
+  settled: boolean;
+  /** How it settled: "activated" | "no-change" | "failed" | "timed-out". */
+  outcome?: "activated" | "no-change" | "failed" | "timed-out";
+  /** Milliseconds after navigation start at which it settled. */
+  settledAfterMs?: number;
+  /** Set when the fetch came through after the app had already stopped waiting. */
+  late?: "activated" | "no-change" | "failed";
+}
+let remoteConfigStatus: RemoteConfigStatus = { settled: false };
+export function getRemoteConfigStatus(): RemoteConfigStatus {
+  return { ...remoteConfigStatus };
+}
+
+export type AuthState =
+  | { state: "none" } // demo mode: no Firebase Auth
+  | { state: "pending" } // no anonymous user yet; the sign-in is under way
+  | { state: "signed-in"; uid: string }
+  | { state: "failed"; error: string };
+
+let authState: AuthState = { state: "none" };
+export function getAuthState(): AuthState {
+  return authState;
+}
+
+let settleAuthReady: (uid: string) => void = () => {};
+let failAuthReady: (reason: unknown) => void = () => {};
+/** Settles with the anonymous user's uid once that user exists — a restored session or a
+ *  completed sign-in — and rejects if the sign-in fails. Nothing on the render path awaits
+ *  it; what needs an owner (the demo seeds, project listings) does. */
+export const authReady: Promise<string> = new Promise((resolve, reject) => {
+  settleAuthReady = resolve;
+  failAuthReady = reject;
+});
+// A sign-in failure must never surface as an unhandled rejection; callers attach their own handlers.
+authReady.catch(() => {});
 
 export async function initFirebase(): Promise<RuntimeMode> {
   let cfg = parseConfig();
@@ -76,10 +157,13 @@ export async function initFirebase(): Promise<RuntimeMode> {
     // and screenshots. It has no effect in emulator or live mode, where Remote
     // Config alone decides (see remoteToggles()).
     const overrides = parseFlagOverrides(location.search);
-    cachedToggles.featureReportDrafting = overrides.reportDrafting ?? true;
-    cachedToggles.featureSeverityCheck = overrides.severityCheck ?? true;
+    cachedToggles.featureReportDrafting = overrides.reportDrafting ?? FEATURE_DEFAULTS.reportDrafting;
+    cachedToggles.featureSeverityCheck = overrides.severityCheck ?? FEATURE_DEFAULTS.severityCheck;
+    publishRemoteToggles();
+    authState = { state: "none" };
+    settleAuthReady("");
     const ai = getAI(app, { backend: new GoogleAIBackend() });
-    initAI(ai);
+    initAI(ai, cachedToggles.cloudModel);
     return runtime;
   }
 
@@ -92,13 +176,13 @@ export async function initFirebase(): Promise<RuntimeMode> {
   // see firebase.google.com/docs/ai-logic/app-check). Skipped in emulator mode
   // (the suite does not enforce App Check). Resolution order:
   //   1. localhost/127.0.0.1 → debug provider; console prints a token to
-  //      register once in App Check → Apps → Manage debug tokens.
+  //   register once in App Check → Apps → Manage debug tokens.
   //   2. VITE_RECAPTCHA_SITE_KEY (or VITE_FIREBASE_CONFIG.recaptchaSiteKey) →
-  //      real reCAPTCHA attestation — recommended for the hosted URL. The
-  //      provider class must match what the console registered: v3 by default,
-  //      or enterprise when VITE_RECAPTCHA_PROVIDER=enterprise.
+  //   real reCAPTCHA attestation — recommended for the hosted URL. The
+  //   provider class must match what the console registered: v3 by default,
+  //   or enterprise when VITE_RECAPTCHA_PROVIDER=enterprise.
   //   3. VITE_APPCHECK_DEBUG_TOKEN → explicit debug token, accepted from any
-  //      origin once registered (the hackathon rules accept debug tokens).
+  //   origin once registered (the hackathon rules accept debug tokens).
   if (!EMULATOR) {
     const isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
     const siteKey = (import.meta.env.VITE_RECAPTCHA_SITE_KEY as string | undefined) || cfg.recaptchaSiteKey;
@@ -126,45 +210,35 @@ export async function initFirebase(): Promise<RuntimeMode> {
     });
   }
 
-  // Auth: anonymous sign-in (upgradeable to Google sign-in later).
-  const { getAuth, signInAnonymously, connectAuthEmulator } = await import("firebase/auth");
+  // Auth: anonymous sign-in (upgradeable to Google sign-in later). The round trip is
+  // NOT awaited: an unreachable network would otherwise hold the first render for as
+  // long as the browser lets a connection hang.
+  const { getAuth, signInAnonymously, connectAuthEmulator, onAuthStateChanged } = await import("firebase/auth");
   const auth = getAuth(app);
   if (EMULATOR) {
     connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
     console.info("[auth] connected to emulator 127.0.0.1:9099");
   }
+  authState = { state: "pending" };
+  onAuthStateChanged(auth, (user) => {
+    (globalThis as { __ssAuthUid?: string }).__ssAuthUid = user?.uid ?? "";
+    if (!user) return; // signed out, or not signed in yet
+    authState = { state: "signed-in", uid: user.uid };
+    settleAuthReady(user.uid);
+    // Test hook (emulator e2e): expose the idToken for direct REST assertions.
+    if (EMULATOR) void user.getIdToken().then((t) => ((globalThis as { __ssAuthIdToken?: string }).__ssAuthIdToken = t));
+  });
   if (auth.currentUser && !navigator.onLine) {
     // Offline cold start with a restored session — skip the network round-trip
-    // so the app renders from local persistence without waiting for a timeout.
+    // altogether; the listener above reports the restored user.
     console.info("[auth] offline with a restored anonymous session — skipping sign-in round-trip");
   } else {
-    await signInAnonymously(auth).catch((e) => console.warn(`[auth] anonymous sign-in failed${EMULATOR ? " (emulator)" : ""}:`, e));
+    void signInAnonymously(auth).catch((e) => {
+      console.warn(`[auth] anonymous sign-in failed${EMULATOR ? " (emulator)" : ""}:`, e);
+      authState = { state: "failed", error: String(e) };
+      failAuthReady(e);
+    });
   }
-  (globalThis as { __ssAuthUid?: string }).__ssAuthUid = auth.currentUser?.uid ?? "";
-  // Test hook (emulator e2e): expose the idToken for direct REST assertions.
-  if (EMULATOR) void auth.currentUser?.getIdToken().then((t) => ((globalThis as { __ssAuthIdToken?: string }).__ssAuthIdToken = t));
-
-  // Remote Config: model routing + feature toggles, defaults below.
-  const { getRemoteConfig, fetchAndActivate, getValue } = await import("firebase/remote-config");
-  const rc = getRemoteConfig(app);
-  rc.settings.minimumFetchIntervalMillis = 600_000;
-  if (EMULATOR) rc.settings.fetchTimeoutMillis = 5_000; // no RC emulator for web SDK → fail fast to defaults
-  rc.defaultConfig = {
-    cloud_model: DEFAULT_CLOUD_MODEL,
-    feature_report_drafting: true,
-    feature_severity_check: true,
-  };
-  await fetchAndActivate(rc).catch((e) => console.warn("[remote-config] fetch failed, using defaults:", e));
-
-  const ai = getAI(app, { backend: new GoogleAIBackend() });
-  initAI(ai, getValue(rc, "cloud_model").asString());
-
-  // Cache Remote Config toggles for the UI (values persist between reloads).
-  cachedToggles.cloudModel = getValue(rc, "cloud_model").asString();
-  cachedToggles.featureReportDrafting = getValue(rc, "feature_report_drafting").asBoolean();
-  cachedToggles.featureSeverityCheck = getValue(rc, "feature_severity_check").asBoolean();
-  // Test hook (e2e): proves the app runs on baked-in defaults when RC is unreachable.
-  (globalThis as { __ssRemoteToggles?: RemoteToggles }).__ssRemoteToggles = { ...cachedToggles };
 
   // Firestore with offline persistence — records captured in dead zones sync later.
   // persistentLocalCache (IndexedDB) is REQUIRED for the offline promise:
@@ -180,18 +254,57 @@ export async function initFirebase(): Promise<RuntimeMode> {
     console.info("[firestore] connected to emulator 127.0.0.1:8080");
   }
 
+  // AI Logic on the default cloud model; a fetched `cloud_model` is applied below.
+  const ai = getAI(app, { backend: new GoogleAIBackend() });
+  initAI(ai, cachedToggles.cloudModel);
+
+  // Remote Config: model routing + feature toggles. The defaults are in force from the
+  // first render on; the fetch is NOT awaited.
+  const { getRemoteConfig, fetchAndActivate, getValue } = await import("firebase/remote-config");
+  const rc = getRemoteConfig(app);
+  rc.settings.minimumFetchIntervalMillis = 600_000;
+  rc.settings.fetchTimeoutMillis = REMOTE_CONFIG_TIMEOUT_MS; // every mode: a slow fetch must not linger
+  rc.defaultConfig = {
+    cloud_model: DEFAULT_CLOUD_MODEL,
+    feature_report_drafting: FEATURE_DEFAULTS.reportDrafting,
+    feature_severity_check: FEATURE_DEFAULTS.severityCheck,
+  };
+  publishRemoteToggles();
+  const applyFetchedValues = () => {
+    const before = JSON.stringify(cachedToggles);
+    cachedToggles.cloudModel = getValue(rc, "cloud_model").asString() || DEFAULT_CLOUD_MODEL;
+    cachedToggles.featureReportDrafting = getValue(rc, "feature_report_drafting").asBoolean();
+    cachedToggles.featureSeverityCheck = getValue(rc, "feature_severity_check").asBoolean();
+    if (JSON.stringify(cachedToggles) === before) return;
+    setCloudModel(cachedToggles.cloudModel); // takes effect from the next call on
+    publishRemoteToggles();
+  };
+  const fetched: Promise<Exclude<RemoteConfigStatus["outcome"], "timed-out">> = fetchAndActivate(rc).then(
+    (activated) => {
+      applyFetchedValues();
+      return activated ? "activated" : "no-change";
+    },
+    (e) => {
+      console.warn("[remote-config] fetch failed, using defaults:", e);
+      return "failed";
+    },
+  );
+  // Bounded: whatever the network does, Remote Config counts as settled after
+  // REMOTE_CONFIG_TIMEOUT_MS and the app goes with what it has by then. A fetch that
+  // comes through later still has its values applied (above).
+  let stoppedWaiting = false;
+  const settle = (outcome: RemoteConfigStatus["outcome"], late = false) => {
+    if (late) remoteConfigStatus = { ...remoteConfigStatus, late: outcome as RemoteConfigStatus["late"] };
+    else remoteConfigStatus = { settled: true, outcome, settledAfterMs: Math.round(performance.now()) };
+    (globalThis as { __ssRemoteConfig?: RemoteConfigStatus }).__ssRemoteConfig = getRemoteConfigStatus();
+  };
+  void Promise.race([fetched, new Promise<"timed-out">((r) => setTimeout(() => r("timed-out"), REMOTE_CONFIG_TIMEOUT_MS))]).then((outcome) => {
+    stoppedWaiting = outcome === "timed-out";
+    settle(outcome);
+    if (!stoppedWaiting) return;
+    // The fetch is still hanging; report how it ends whenever it does.
+    void fetched.then((how) => settle(how, true));
+  });
+
   return runtime;
-}
-
-const cachedToggles: RemoteToggles = {
-  cloudModel: DEFAULT_CLOUD_MODEL,
-  featureReportDrafting: true,
-  featureSeverityCheck: true,
-};
-
-/** The Remote Config values in force (baked-in defaults until — and unless — a fetch
- *  says otherwise; the feature switches can also be turned off by the demo-only URL
- *  flag, see initFirebase). Read by the UI through featureGate() in flags.ts. */
-export function remoteToggles(): RemoteToggles {
-  return { ...cachedToggles };
 }

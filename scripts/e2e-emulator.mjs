@@ -21,6 +21,14 @@
  *          SDK path: ?engine=sim_cloud shows no banner and nothing
  *          "(simulated)"; ?feature_report_drafting=false /
  *          ?feature_severity_check=false leave both features offered
+ *   emu-8  (2026-11-25, day) the first render does not wait for the network:
+ *          the first project card within 3 s of navigation; Remote Config
+ *          settled (on the defaults) within its 5 s bound
+ *   emu-9  (2026-11-25, day) the same with every Firebase / Google request
+ *          HELD — neither answered nor failed, as on a blocked network: the
+ *          page renders at once ("Signing in…"), Remote Config settles as
+ *          timed-out within its bound, and the owner's data follows once the
+ *          sign-in is let through while Google's requests stay held
  *
  * The script builds (VITE_USE_EMULATOR=1), boots the emulator suite itself
  * (needs JAVA_HOME pointing at a JDK — see README), runs Chrome headless via
@@ -101,6 +109,24 @@ async function portOpen(port) {
   try { await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1500) }); return true; } catch (e) { return e?.code !== "ECONNREFUSED" && !/ECONNREFUSED/.test(String(e?.cause ?? e)); }
 }
 
+/** Runs in the page before the app does: the moment the home view first shows content in
+ *  its Projects panel — a project card, or an explicit state line such as "Signing in…" —
+ *  in milliseconds since the navigation started. */
+function markFirstRender() {
+  new MutationObserver(() => {
+    const list = document.querySelector("#project-list");
+    if (list && list.textContent.trim() && window.__ssFirstRender == null) window.__ssFirstRender = Math.round(performance.now());
+  }).observe(document, { childList: true, subtree: true, characterData: true });
+}
+const DEFAULT_TOGGLES = (t) => !!t && t.cloudModel === "gemini-3.8-flash" && t.featureReportDrafting === true && t.featureSeverityCheck === true;
+/** Runs in the page: the app's Remote Config status hook, once it has settled. */
+const remoteConfigStatus = () => (globalThis.__ssRemoteConfig?.settled === true ? globalThis.__ssRemoteConfig : false);
+/** What "the first render must not wait for the network" has to mean in numbers: the home
+ *  view within 3 s of navigation, and Remote Config counted as settled within its own bound
+ *  (5 s, REMOTE_CONFIG_TIMEOUT_MS in src/firebase.ts) plus slack. */
+const FIRST_RENDER_LIMIT_MS = 3000;
+const REMOTE_CONFIG_BOUND_MS = 5000;
+
 /* ---------- 0. build + boot ---------- */
 
 const javaHome = findJavaHome();
@@ -167,16 +193,19 @@ try {
   page.on("console", (m) => {
     if (/cannot be configured at the top level/.test(m.text())) topLevelModelWarnings.push(m.text().slice(0, 160));
   });
+  await page.evaluateOnNewDocument(markFirstRender);
   await page.goto(APP_URL + "?engine=off", { waitUntil: "load", timeout: 30_000 });
-  // The first render comes only after the Remote Config fetch (and the Installations
-  // registration before it). With Google's endpoints reachable-but-blackholed both hung
-  // for 84.5 s on 2026-11-25 and the former 30 s bound gave up on a blank page; on a
-  // usual network the card is there within seconds. An upper bound, not an assertion.
-  await poll(() => page.evaluate(() => !!document.querySelector("#project-list .card")), { timeoutMs: 180_000, label: "seeded project card" });
+  // The card needs the anonymous sign-in (local Auth emulator), the demo seeds and the
+  // Firestore cache — not the network to Google. Remote Config is fetched in the
+  // background; where Google's endpoints hang it used to delay the first render by 85 s
+  // (2026-11-25). The bound is generous for a loaded machine only; it is not an assertion.
+  await poll(() => page.evaluate(() => !!document.querySelector("#project-list .card")), { timeoutMs: 60_000, label: "seeded project card" });
 
   const runtimeChip = await page.evaluate(() => [...document.querySelectorAll(".topbar .chip")].map((c) => c.textContent).join(" | "));
-  check("hosting emulator serves app", runtimeChip.length > 0, runtimeChip);
+  const firstRenderMs = await page.evaluate(() => window.__ssFirstRender ?? null);
+  check("hosting emulator serves app", runtimeChip.length > 0, `${runtimeChip} · first render after ${firstRenderMs} ms`);
   check("runtime chip says emulator (real SDK path)", /emulator/.test(runtimeChip), runtimeChip);
+  check("the first render did not wait for the network (project card within 3 s of navigation)", typeof firstRenderMs === "number" && firstRenderMs <= FIRST_RENDER_LIMIT_MS, `first render after ${firstRenderMs} ms, limit ${FIRST_RENDER_LIMIT_MS}`);
   await page.screenshot({ path: path.join(SHOTS, "emu-1-home.png") });
 
   const uidA = await page.evaluate(() => globalThis.__ssAuthUid);
@@ -188,8 +217,16 @@ try {
   check("anonymous sign-in (idToken provider_id=anonymous, matches uid)", tokenPayload.provider_id === "anonymous" && tokenPayload.user_id === uidA, `provider=${tokenPayload.provider_id} user=${tokenPayload.user_id?.slice(0, 8)}…`);
 
   /* ---------- 2. Remote Config falls back to defaults ---------- */
+  // There is no Remote Config emulator: the fetch goes to Google and fails — or, where
+  // Google's endpoints hang, runs out of the app's 5 s bound. Either way the values in
+  // force stay the baked-in defaults, and the app stops waiting within that bound.
+  const rcStatus = await poll(() => page.evaluate(remoteConfigStatus), { timeoutMs: 20_000, label: "Remote Config settled" });
   const toggles = await page.evaluate(() => globalThis.__ssRemoteToggles);
-  check("Remote Config falls back to defaults", !!toggles && toggles.cloudModel === "gemini-3.8-flash" && toggles.featureReportDrafting === true && toggles.featureSeverityCheck === true, JSON.stringify(toggles));
+  check(
+    "Remote Config falls back to defaults",
+    DEFAULT_TOGGLES(toggles) && rcStatus.settledAfterMs <= REMOTE_CONFIG_BOUND_MS + 2000,
+    `${JSON.stringify(toggles)} · settled after ${rcStatus.settledAfterMs} ms (${rcStatus.outcome})`,
+  );
 
   /* ---------- 3. offline capture ---------- */
   await page.click("#project-list .card");
@@ -337,11 +374,7 @@ try {
     const page2 = await ctx2.newPage();
     await page2.setViewport({ width: 1280, height: 800 });
     await page2.goto(APP_URL + "?engine=sim_cloud&feature_report_drafting=false&feature_severity_check=false", { waitUntil: "load", timeout: 30_000 });
-    // The first render waits for the Remote Config fetch (and, before it, the
-    // Installations registration). With Google's endpoints reachable-but-blackholed both
-    // hung for 84.5 s on 2026-11-25, so this bound is generous; on a usual network the
-    // card is there within seconds.
-    await poll(() => page2.evaluate(() => !!document.querySelector("#project-list .card")), { timeoutMs: 180_000, label: "second user's seeded project" });
+    await poll(() => page2.evaluate(() => !!document.querySelector("#project-list .card")), { timeoutMs: 60_000, label: "second user's seeded project" });
     await poll(() => page2.evaluate(() => typeof globalThis.__ssRemoteToggles === "object"), { timeoutMs: 15_000, label: "Remote Config hook" });
     const asked = await page2.evaluate(() => ({
       banner: !!document.querySelector(".sim-banner"),
@@ -365,6 +398,64 @@ try {
     await page2.screenshot({ path: path.join(SHOTS, "emu-8-url-switches-ignored.png") });
   } finally {
     await ctx2.close();
+  }
+
+  /* ---------- 8. the first render does not wait for the network ---------- */
+  // Hold every request to the Firebase / Google hosts: neither answered nor failed, which
+  // is what a blocked network looks like (84.5 s to time out on 2026-11-25; mainland users
+  // are in this situation all the time). The page must still render at once, on the baked-in
+  // defaults, and Remote Config must count as settled within its bound. The owner's data
+  // follows once the sign-in is let through — the Google requests stay held for good.
+  // Deterministic: nothing here depends on what the real network does with Google.
+  const ctx3 = await browser.createBrowserContext();
+  try {
+    const page3 = await ctx3.newPage();
+    await page3.setViewport({ width: 1280, height: 800 });
+    await page3.evaluateOnNewDocument(markFirstRender);
+    const hold = await page3.createCDPSession();
+    const held = [];
+    hold.on("Fetch.requestPaused", (ev) => held.push({ id: ev.requestId, url: ev.request.url, method: ev.request.method }));
+    // The Auth emulator's URL has "identitytoolkit.googleapis.com" in its PATH, so the Google
+    // pattern has to be scheme-anchored (https) or it would keep holding the sign-in.
+    const GOOGLE = "https://*googleapis.com*";
+    const AUTH_HOST = "127.0.0.1:9099";
+    await hold.send("Fetch.enable", { patterns: [{ urlPattern: GOOGLE, requestStage: "Request" }, { urlPattern: `http://${AUTH_HOST}/*`, requestStage: "Request" }] });
+    await page3.goto(APP_URL + "?engine=off", { waitUntil: "load", timeout: 30_000 });
+    const firstRenderMs = await poll(() => page3.evaluate(() => window.__ssFirstRender), { timeoutMs: 15_000, label: "first render while every Firebase / Google request is held" });
+    const rcHeld = await poll(() => page3.evaluate(remoteConfigStatus), { timeoutMs: 20_000, label: "Remote Config settled while its fetch is held" });
+    const whileHeld = await page3.evaluate(() => ({
+      projects: document.querySelector("#project-list")?.textContent.replace(/\s+/g, " ").trim() ?? null,
+      toggles: globalThis.__ssRemoteToggles,
+      bodyChars: document.body.innerText.trim().length,
+    }));
+    await page3.screenshot({ path: path.join(SHOTS, "emu-9-first-render-network-held.png") });
+    check(
+      "with every Firebase / Google request held, the first render comes at once (no blank page)",
+      typeof firstRenderMs === "number" && firstRenderMs <= FIRST_RENDER_LIMIT_MS && whileHeld.bodyChars > 40 && /Signing in/.test(whileHeld.projects ?? ""),
+      `first render after ${firstRenderMs} ms (limit ${FIRST_RENDER_LIMIT_MS}); Projects panel: "${whileHeld.projects}"`,
+    );
+    check(
+      "…on the baked-in defaults, and Remote Config counts as settled within its bound although its fetch is still hanging",
+      DEFAULT_TOGGLES(whileHeld.toggles) && rcHeld.outcome === "timed-out" && rcHeld.settledAfterMs <= REMOTE_CONFIG_BOUND_MS + 2000 && held.some((h) => h.url.startsWith("https://") && /googleapis\.com/.test(h.url)),
+      `${JSON.stringify(whileHeld.toggles)} · settled after ${rcHeld.settledAfterMs} ms (${rcHeld.outcome}); held: ${held.map((h) => `${h.method} ${h.url.replace(/\?.*$/, "")}`).join(" | ")}`,
+    );
+    // From now on only Google's requests are held; then the sign-in already held is let
+    // through. (New auth requests must not be paused any more: the auth SDK continues with
+    // a second call.)
+    await hold.send("Fetch.enable", { patterns: [{ urlPattern: GOOGLE, requestStage: "Request" }] });
+    for (const h of held.filter((x) => x.url.includes(AUTH_HOST))) {
+      await hold.send("Fetch.continueRequest", { requestId: h.id }).catch((e) => console.log(`  [hold] could not continue ${h.method} ${h.url.slice(0, 60)}: ${String(e).slice(0, 120)}`));
+    }
+    const cards = await poll(() => page3.evaluate(() => document.querySelectorAll("#project-list .card").length), { timeoutMs: 30_000, label: "seeded project once the sign-in gets through" }).catch(async (e) => {
+      const st = await page3.evaluate(() => ({ projects: document.querySelector("#project-list")?.textContent.replace(/\s+/g, " ").trim() ?? null, uid: globalThis.__ssAuthUid ?? null })).catch(() => null);
+      console.log(`  [hold] ${e}; page says ${JSON.stringify(st)}; held so far: ${held.map((h) => `${h.method} ${h.url.replace(/\?.*$/, "")}`).join(" | ")}`);
+      throw e;
+    });
+    const after = await page3.evaluate(() => ({ cards: document.querySelectorAll("#project-list .card").length, uid: globalThis.__ssAuthUid ?? null }));
+    check("the owner's data follows once the sign-in gets through, Google's requests still held", cards >= 1 && typeof after.uid === "string" && after.uid.length > 0, JSON.stringify(after));
+    await page3.screenshot({ path: path.join(SHOTS, "emu-10-after-sign-in-google-still-held.png") });
+  } finally {
+    await ctx3.close();
   }
 } catch (e) {
   check("e2e-emulator ran to completion", false, String(e));
