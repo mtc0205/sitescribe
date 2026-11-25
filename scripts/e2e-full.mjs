@@ -24,6 +24,10 @@
  *  - Remote Config kill-switches, switched off through the demo-only URL flags
  *    (e2e-22): the control is disabled with an explanation and no request is
  *    sent; with no flag the defaults offer both features
+ * and from the 2026-11-25 day shift:
+ *  - a HUNG network (e2e-23): every AI Logic request is paused and never
+ *    answered, as on a blocked connection; F1–F4 must each fall back within
+ *    their own budget (SPEC §9) to their own honest state
  * Asserts the full loop; exits non-zero on any failure.
  *
  * Base URL: --url <base> or --port <n> (default http://127.0.0.1:5173, the
@@ -527,6 +531,81 @@ check(
   aiRequests === 0 && afterClicks.reportOut === "" && afterClicks.checkOuts.every((t) => t === "") && offLog.every((r) => !/F3 report|F4 severity/.test(r)),
   JSON.stringify({ aiRequests, afterClicks, offLog }),
 );
+
+// ---- 10. a hung network: every feature degrades within its own budget ----
+// Pause each AI Logic request before it leaves the browser and never answer it — neither
+// success nor failure, which is what a blocked connection looks like (the browser gave up
+// only after 84.5 s on 2026-11-25, and F2–F4 had no budget at all). Each of F1–F4 must
+// fall back on its own budget, to its own honest state.
+const hungPage = await openPage("?engine=off");
+const hangCdp = await hungPage.createCDPSession();
+const hung = [];
+hangCdp.on("Fetch.requestPaused", (ev) => hung.push({ id: ev.requestId, method: ev.request.method, url: ev.request.url }));
+await hangCdp.send("Fetch.enable", { patterns: [{ urlPattern: "*generateContent*", requestStage: "Request" }] });
+await hungPage.click("#project-list .card");
+await hungPage.waitForSelector("#note");
+// The budgets of SPEC §9 in demo mode: 12 s without an on-device model, 90 s for the first
+// structuring call with one and 45 s for every other call.
+const modelAvailable = (await hungPage.evaluate(() => ("LanguageModel" in self ? self.LanguageModel.availability().catch(() => "error") : "no-api"))) === "available";
+const BUDGET_MS = modelAvailable ? 45_000 : 12_000;
+const F1_BUDGET_MS = modelAvailable ? 90_000 : 12_000;
+const withinBudget = (ms, budget) => ms >= budget - 1500 && ms <= budget + 6000;
+
+const tF1 = Date.now();
+await hungPage.type("#note", NOTE_ONLINE);
+await hungPage.click("#capture-btn");
+await poll(hungPage, () => document.querySelector("#capture-result .ai-block") ?? "", { timeoutMs: F1_BUDGET_MS + 20_000 });
+const f1Ms = Date.now() - tF1;
+const tRest = Date.now();
+await hungPage.click("#record-list .record .check-btn");
+await hungPage.type("#qa-input", "What does efflorescence usually indicate?");
+await hungPage.click("#qa-btn");
+await hungPage.click("#report-btn");
+await poll(
+  hungPage,
+  () => {
+    const f4 = document.querySelector("#record-list .record .check-out")?.textContent ?? "";
+    const f2 = document.querySelector("#qa-out .ai-head .chip")?.textContent ?? "";
+    const f3 = document.querySelector("#report-out .ai-head .chip")?.textContent ?? "";
+    return f4 && !/checking/.test(f4) && f2 && f3 ? { f4, f2, f3 } : null;
+  },
+  { timeoutMs: BUDGET_MS + 20_000 },
+);
+const restMs = Date.now() - tRest;
+const hungState = await hungPage.evaluate(() => ({
+  f1Badge: document.querySelector("#capture-result .ai-head .chip")?.textContent ?? null,
+  f4: document.querySelector("#record-list .record .check-out")?.textContent.replace(/\s+/g, " ").trim() ?? null,
+  f2Badge: document.querySelector("#qa-out .ai-head .chip")?.textContent ?? null,
+  f2Text: document.querySelector("#qa-out .ai-body")?.textContent ?? null,
+  f3Badge: document.querySelector("#report-out .ai-head .chip")?.textContent ?? null,
+  f3Body: document.querySelector("#report-out .ai-body")?.innerHTML ?? "",
+  chip: document.querySelector("#engine-chip")?.textContent ?? null,
+}));
+await hungPage.screenshot({ path: SHOTS + "\\e2e-23-hung-network-fallbacks.png", fullPage: true });
+const hungPosts = hung.filter((h) => h.method === "POST").length;
+check(
+  "hung network · the AI Logic requests really hang (paused, never answered) while the app goes on",
+  hungPosts >= 4,
+  `${hungPosts} POST request(s) paused, none answered`,
+);
+check(
+  `hung network · F1–F4 fall back within their budget (${Math.round(F1_BUDGET_MS / 1000)} s / ${Math.round(BUDGET_MS / 1000)} s), not after the browser's 84 s`,
+  withinBudget(f1Ms, F1_BUDGET_MS) && withinBudget(restMs, BUDGET_MS),
+  `F1 after ${f1Ms} ms; F4 + F2 + F3 together after ${restMs} ms`,
+);
+check(
+  "hung network · each fallback is the honest one (rule-based record, rule-based check, \"no engine answered in time\", report timed out)",
+  /Rule-based fallback/.test(hungState.f1Badge ?? "") &&
+    /Rule-based fallback/.test(hungState.f4 ?? "") &&
+    /Rule-based check/.test(hungState.f4 ?? "") &&
+    /^No engine answered in time$/.test((hungState.f2Badge ?? "").replace(/^[^\w]+/, "")) &&
+    /^No engine answered within \d+ seconds/.test(hungState.f2Text ?? "") &&
+    /^Report drafting timed out — the cloud engine did not answer in time$/.test((hungState.f3Badge ?? "").replace(/^[^\w]+/, "")) &&
+    !/report-actions|class="report"/.test(hungState.f3Body),
+  JSON.stringify(hungState),
+);
+// Let the hung requests fail now; the page is done.
+for (const h of hung) await hangCdp.send("Fetch.failRequest", { requestId: h.id, errorReason: "TimedOut" }).catch(() => {});
 } catch (e) {
   check("e2e-full ran to completion", false, String(e));
 } finally {

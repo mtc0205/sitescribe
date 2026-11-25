@@ -6,8 +6,16 @@
  * built from `GenerateContentResponse.inferenceSource`.
  */
 import type { AiAnswer, EngineBadgeInfo } from "./types";
-import { ruleBasedStructure, ruleBasedCrossCheck, type DefectJson } from "./extract";
-import { badgeFromSource, hybridModelParams, settleStructureReply } from "./engine";
+import { ruleBasedStructure, type DefectJson } from "./extract";
+import {
+  badgeFromSource,
+  hybridModelParams,
+  settleStructureReply,
+  answerWithinBudget,
+  fieldQaWithoutEngine,
+  reportWithoutEngine,
+  severityWithoutEngine,
+} from "./engine";
 import { DEFAULT_CLOUD_MODEL } from "./flags";
 
 export type { DefectJson };
@@ -132,7 +140,7 @@ function isSimulated(): boolean {
   );
 }
 
-function simulatedAnswer(feature: string, prompt: string): AiAnswer {
+function simulatedAnswer(prompt: string): AiAnswer {
   const wantsJson = prompt.includes("structured defect record");
   let text: string;
   if (wantsJson) {
@@ -149,7 +157,7 @@ function simulatedAnswer(feature: string, prompt: string): AiAnswer {
     simulation === "cloud"
       ? { engine: "in_cloud", fellBack: false, label: "Cloud · Gemini (simulated)" }
       : { engine: "in_cloud", fellBack: true, label: "Fell back to cloud · Gemini (simulated)" };
-  emitEngine(badge, feature);
+  // No engine event here: the caller emits it, once, for the answer that is used.
   return { text, badge };
 }
 
@@ -194,6 +202,17 @@ export async function aiBudgetMs(): Promise<number> {
   if ((await deviceAvailability()) === "available") {
     return deviceBudgetedCalls++ === 0 ? 90_000 : 45_000;
   }
+  const mode = (globalThis as { __ssRuntimeMode?: string }).__ssRuntimeMode;
+  return mode === "demo" || mode === "emulator" ? 12_000 : 45_000;
+}
+
+/**
+ * How long F2–F4 may take before the honest fallback kicks in: the budget F1 gets for
+ * any call after its first. Until 2026-11-25 these three had none, so on a network that
+ * hangs instead of failing they waited for the browser itself to give up — 84.5 s.
+ */
+export async function callBudgetMs(): Promise<number> {
+  if ((await deviceAvailability()) === "available") return 45_000;
   const mode = (globalThis as { __ssRuntimeMode?: string }).__ssRuntimeMode;
   return mode === "demo" || mode === "emulator" ? 12_000 : 45_000;
 }
@@ -264,15 +283,18 @@ interface GenerateExtras {
   inferenceSource?: "on_device" | "in_cloud";
 }
 
-/** Core call: single-turn generation in a given mode, returning text + badge. */
-async function ask(
+/**
+ * One engine call: the reply and its badge — and nothing else. Emitting the engine
+ * event is the caller's job, once per call, because only the caller knows whether the
+ * reply is actually used (answerWithinBudget, structureNote).
+ */
+async function generate(
   mode: (typeof InferenceMode)[keyof typeof InferenceMode],
   prompt: string,
   options: { responseMimeType?: string; responseSchema?: object; temperature?: number } = {},
   requestedOnDevice = true,
-  feature = "ai",
 ): Promise<AiAnswer> {
-  if (isSimulated()) return simulatedAnswer(feature, prompt);
+  if (isSimulated()) return simulatedAnswer(prompt);
   const model = requireModel(mode);
   const request: GenerateContentRequest = {
     contents: [{ role: "user", parts: [{ type: "text", text: prompt }] }],
@@ -289,8 +311,20 @@ async function ask(
   // The engine is read off the response, never inferred from the requested mode;
   // a response that does not say is badged "Engine unknown" (engine.ts).
   const badge = badgeFromSource(meta.inferenceSource, requestedOnDevice);
-  emitEngine(badge, feature);
   return { text: result.response.text(), badge };
+}
+
+/** `generate` plus the engine event of its reply — for a call whose reply is used come what may. */
+async function ask(
+  mode: (typeof InferenceMode)[keyof typeof InferenceMode],
+  prompt: string,
+  options: { responseMimeType?: string; responseSchema?: object; temperature?: number } = {},
+  requestedOnDevice = true,
+  feature = "ai",
+): Promise<AiAnswer> {
+  const answer = await generate(mode, prompt, options, requestedOnDevice);
+  emitEngine(answer.badge, feature);
+  return answer;
 }
 
 /** F1 — free-text field note → structured defect record (JSON). On-device first. */
@@ -330,20 +364,20 @@ export async function structureNote(note: string): Promise<{ record: DefectJson;
 
 ;
 
-/** F2 — on-site single-turn Q&A. On-device first. */
+/** F2 — on-site single-turn Q&A. On-device first. Under a budget (callBudgetMs): a hung
+ *  network ends in "No engine answered in time", a failed one in "No engine reachable". */
 export async function askFieldQuestion(question: string): Promise<AiAnswer> {
-  try {
-    return await ask(InferenceMode.PREFER_ON_DEVICE, `${QA_PROMPT}\n\nQuestion: ${question}`, { temperature: 0.3 }, true, "F2 field QA");
-  } catch (e) {
-    // Honest degradation: offline with no device model → say so, never fake.
-    console.warn("[ai] field QA failed:", e);
-    const badge: EngineBadgeInfo = { engine: "unavailable", label: "No engine reachable (offline, no device model)", short: "No engine reachable" };
-    emitEngine(badge, "F2 field QA");
-    return {
-      text: "Field Q&A needs either the on-device model or a connection — none was reachable. Defect capture still works: notes are structured by transparent rules and will sync later.",
-      badge,
-    };
-  }
+  const budgetMs = await callBudgetMs();
+  return answerWithinBudget(
+    () => generate(InferenceMode.PREFER_ON_DEVICE, `${QA_PROMPT}\n\nQuestion: ${question}`, { temperature: 0.3 }, true),
+    budgetMs,
+    (e) => {
+      // Honest degradation: say what happened, never fake an answer.
+      console.warn("[ai] field QA failed:", e);
+      return fieldQaWithoutEngine(e);
+    },
+    (a) => emitEngine(a.badge, "F2 field QA"),
+  );
 }
 
 /** F3 — report drafting. Cloud only by design (long aggregation, see SPEC §5). */
@@ -356,10 +390,23 @@ export async function draftReport(records: DefectJson[]): Promise<AiAnswer> {
   const recordsText = records
     .map((r, i) => `${i + 1}. [${r.severity}] ${r.defectType} — ${r.component} (${r.quantity})${r.notes ? `; ${r.notes}` : ""}`)
     .join("\n");
-  return ask(InferenceMode.ONLY_IN_CLOUD, `${REPORT_PROMPT}\n\nRecords:\n${recordsText}`, { temperature: 0.4 }, false, "F3 report");
+  const budgetMs = await callBudgetMs();
+  try {
+    return await answerWithinBudget(
+      () => generate(InferenceMode.ONLY_IN_CLOUD, `${REPORT_PROMPT}\n\nRecords:\n${recordsText}`, { temperature: 0.4 }, false),
+      budgetMs,
+      reportWithoutEngine, // a timed-out call is answered with the badge alone; other failures go on
+      (a) => emitEngine(a.badge, "F3 report"),
+    );
+  } catch (e) {
+    console.warn("[ai] report drafting failed:", e);
+    throw e; // the UI reports it ("Report drafting failed: …"), as before
+  }
 }
 
-/** F4 — severity cross-check against a maintenance-standard reference card. On-device. */
+/** F4 — severity cross-check against a maintenance-standard reference card. On-device.
+ *  Under a budget (callBudgetMs); whatever kept the engine from answering, the rule-based
+ *  cross-check against the same card answers and says so. */
 export async function crossCheckSeverity(record: DefectJson): Promise<AiAnswer> {
   const card = [
     "Reference (crack width, indicative): <0.15mm hairline; 0.15–0.5mm minor (monitor); >0.5mm or active/widening moderate–severe (specialist).",
@@ -367,12 +414,14 @@ export async function crossCheckSeverity(record: DefectJson): Promise<AiAnswer> 
     "Reference (seepage/efflorescence): isolated efflorescence minor; active seepage with deposits moderate; structural saturation severe.",
   ].join("\n");
   const q = `Given the record below and the reference card, answer in 3 sentences: does the recorded severity match the reference? If measurements are missing, say what to measure next.\n\nRecord: ${JSON.stringify(record)}\n\n${card}`;
-  try {
-    return await ask(InferenceMode.PREFER_ON_DEVICE, q, { temperature: 0.2 }, true, "F4 severity check");
-  } catch (e) {
-    console.warn("[ai] severity check failed:", e);
-    const badge: EngineBadgeInfo = { engine: "unavailable", label: "Rule-based fallback (no AI engine reachable)", short: "Rule-based fallback" };
-    emitEngine(badge, "F4 severity check");
-    return { text: ruleBasedCrossCheck(record), badge };
-  }
+  const budgetMs = await callBudgetMs();
+  return answerWithinBudget(
+    () => generate(InferenceMode.PREFER_ON_DEVICE, q, { temperature: 0.2 }, true),
+    budgetMs,
+    (e) => {
+      console.warn("[ai] severity check failed:", e);
+      return severityWithoutEngine(record, e);
+    },
+    (a) => emitEngine(a.badge, "F4 severity check"),
+  );
 }

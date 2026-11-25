@@ -9,8 +9,8 @@
  * No SDK / browser dependencies, so the decisions are unit-tested in plain node
  * (tests/engine.test.ts), the same way extract.ts and format.ts are.
  */
-import type { DefectRecord, EngineBadgeInfo } from "./types.ts";
-import { repairJson, ruleBasedStructure } from "./extract.ts";
+import type { AiAnswer, DefectRecord, EngineBadgeInfo } from "./types.ts";
+import { repairJson, ruleBasedStructure, ruleBasedCrossCheck } from "./extract.ts";
 import type { DefectJson } from "./extract.ts";
 
 /**
@@ -115,5 +115,116 @@ export function settleStructureReply(replyText: string, replyBadge: EngineBadgeI
       short: "Rule-based (reply unusable)",
     },
     fromModel: false,
+  };
+}
+
+/* ---------- budgets: a hung network must degrade like a failed one ---------- */
+
+/** Thrown when an engine call outlives its budget. A hung connection looks exactly like
+ *  this — neither an answer nor an error, for as long as the browser lets it hang (84.5 s
+ *  on 2026-11-25). */
+export class BudgetExceeded extends Error {
+  /** The budget that ran out, in whole seconds — for labels that say so. */
+  readonly seconds: number;
+  constructor(budgetMs: number) {
+    super(`AI call timed out (${Math.round(budgetMs / 1000)}s)`);
+    this.seconds = Math.round(budgetMs / 1000);
+  }
+}
+
+/** What became of a call after its budget had been lost. */
+export interface LateReply<T> {
+  reply?: T;
+  error?: unknown;
+}
+
+/**
+ * Run `call` under a budget. Resolves with the reply if it arrives in time, rejects with
+ * BudgetExceeded if it does not. A reply that arrives after the budget was lost is
+ * dropped: `onLate` is told about it and nothing else ever sees it — so a late reply can
+ * neither take the status chip nor change an answer that was already settled.
+ */
+export function withinBudget<T>(call: Promise<T>, budgetMs: number, onLate: (late: LateReply<T>) => void = () => {}): Promise<T> {
+  let lost = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      lost = true;
+      reject(new BudgetExceeded(budgetMs));
+    }, budgetMs);
+  });
+  // The call's own fate after the budget does not matter any more, but it must be observed.
+  call.then(
+    (reply) => {
+      if (lost) onLate({ reply });
+    },
+    (error) => {
+      if (lost) onLate({ error });
+    },
+  );
+  return Promise.race([call, budget]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * One engine call for F2-F4 under a budget. Exactly one engine event is emitted, and only
+ * for the answer the user gets: the reply when it arrives in time, otherwise what
+ * `withoutEngine` makes of the failure — a BudgetExceeded included. `withoutEngine` may
+ * throw to pass a failure on to the caller instead. A reply that arrives late is dropped.
+ */
+export async function answerWithinBudget(
+  call: () => Promise<AiAnswer>,
+  budgetMs: number,
+  withoutEngine: (reason: unknown) => AiAnswer,
+  emit: (answer: AiAnswer) => void,
+  onLate?: (late: LateReply<AiAnswer>) => void,
+): Promise<AiAnswer> {
+  try {
+    const reply = await withinBudget(call(), budgetMs, onLate);
+    emit(reply);
+    return reply;
+  } catch (e) {
+    const fallback = withoutEngine(e);
+    emit(fallback);
+    return fallback;
+  }
+}
+
+/* ---------- what the user gets when no engine answered (F2-F4) ---------- */
+
+/** F2. A failure is "no engine reachable"; a timed-out call says that instead — a hung
+ *  connection is not an offline device. */
+export function fieldQaWithoutEngine(reason: unknown): AiAnswer {
+  const captureStillWorks = "Defect capture still works: notes are structured by transparent rules and will sync later.";
+  if (reason instanceof BudgetExceeded) {
+    return {
+      text: `No engine answered within ${reason.seconds} seconds — the on-device model and the cloud engine neither replied nor failed (a hung connection looks like this). ${captureStillWorks}`,
+      badge: { engine: "unavailable", label: "No engine answered in time", short: "No engine answered in time" },
+    };
+  }
+  return {
+    text: `Field Q&A needs either the on-device model or a connection — none was reachable. ${captureStillWorks}`,
+    badge: { engine: "unavailable", label: "No engine reachable (offline, no device model)", short: "No engine reachable" },
+  };
+}
+
+/** F3. Only a timed-out call is answered here; any other failure is passed on to the
+ *  caller, which reports it ("Report drafting failed: …"). The text is empty on purpose:
+ *  the UI shows the badge alone, as it does offline. */
+export function reportWithoutEngine(reason: unknown): AiAnswer {
+  if (reason instanceof BudgetExceeded) {
+    return {
+      text: "",
+      badge: { engine: "unavailable", label: "Report drafting timed out — the cloud engine did not answer in time", short: "Report drafting timed out" },
+    };
+  }
+  throw reason;
+}
+
+/** F4. The rule-based cross-check against the same reference card, whatever kept the
+ *  engine from answering. */
+export function severityWithoutEngine(record: DefectJson, _reason: unknown): AiAnswer {
+  return {
+    text: ruleBasedCrossCheck(record),
+    badge: { engine: "unavailable", label: "Rule-based fallback (no AI engine reachable)", short: "Rule-based fallback" },
   };
 }
