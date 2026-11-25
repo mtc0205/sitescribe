@@ -74,23 +74,24 @@ When the project cannot use the Gemini API (below), every answer names the cause
 
 ## Verified state
 
-Last run on 2026-11-26 (Windows, Chrome 158, Node 24) against this exact tree for `check`, `test`, `e2e-full` and `live-readiness`; every other row carries the date of its own last run.
+Last run on 2026-11-26 (Windows, Chrome 158, Node 24) against this exact tree for `check`, `test` and `live-readiness`, and for `e2e-full` on the same application code; every other row carries the date of its own last run.
 
 | Command | What it proves | Result |
 |---|---|---|
 | `npm run check` | TypeScript, strict | 0 errors |
-| `npm test` | rule-based extraction, engine attribution, call budgets and late replies, what a cloud refusal and a refused sign-in mean, simulation texts, Remote Config feature switches, conflict merge, pending queue, bootstrap env writer, the readiness checks' decisions, local-time formatting, video timeline maths | 135 / 135 |
+| `npm test` | rule-based extraction, engine attribution, call budgets and late replies, what a cloud refusal and a refused sign-in mean, simulation texts, Remote Config feature switches, conflict merge, pending queue, the bootstrap's env writer, deploy targets and sign-in probe, the readiness checks' decisions, local-time formatting, video timeline maths | 139 / 139 |
 | `node scripts/e2e-full.mjs` | demo-mode loop on a fresh browser profile: seeds, local + zoned timestamps, a half-typed note survives a connectivity change, online capture synced, offline capture pending → synced, F1–F4; the two capture edge cases (a reply that cannot be used, a reply with no engine named) with canned SDK replies; simulation labelling; the feature switches; a hung network, where every call falls back within its budget and a late reply changes nothing; a cloud engine the project cannot use — the AI Logic request is answered with the real project's HTTP 403 and every badge, the status chip and every log row name the cause, the capture stays rule-based and the report is no report | 41 / 41 |
 | `node scripts/e2e-emulator.mjs` | the **real Firebase SDK** chain (Auth, Firestore, Remote Config) against the local Emulator Suite: anonymous sign-in, offline write not on the server → arrives after reconnect, rules reject cross-user access (403), PWA shell renders after an offline reload, the demo-only URL switches have no effect there, the AI Logic request names the configured cloud model, and the first render does not wait for the network — with every Firebase / Google request held, the page still rendered at once (84 ms in that run) | 27 / 27 † (2026-11-25) |
 | `node scripts/e2e-ondevice.mjs` | **real Gemini Nano on-device**, network cut (any fetch fails): the capture and Q&A badges come from `inferenceSource === "on_device"` | 2 / 2 — four runs on 2026-11-25, the last three on the final capture path, the last with a clean tree |
 | `node scripts/ui-screens.mjs` | WCAG contrast of every text/background pair, computed from real styles (all ≥ 4.5:1, minimum 5.7:1), plus a first-screen audit | exit 0 (2026-11-25) |
-| `node scripts/live-readiness.mjs` | the **real project**, no browser: the CLI is logged in; the hosting URL answers and serves the build in `dist/`; anonymous sign-in; Gemini through AI Logic with the registered App Check debug token | **3 / 5** — hosting serves the deployed build ✓ · anonymous sign-in **not enabled** (`CONFIGURATION_NOT_FOUND`) ✗ · Gemini **refused** (`FREE_TIER_UNAVAILABLE`, HTTP 403) ✗ |
-| a local **live-mode** build against the real project, headless Chrome | what a visitor sees while the two steps above are pending: the Projects panel says “This deployment has not enabled anonymous sign-in (CONFIGURATION_NOT_FOUND) … Reloading the page does not help until then.”, ＋ New is refused with the same reason; the Remote Config fetch itself succeeds (`no-change` after 1.9 s) | observed 2026-11-26 |
+| `node scripts/live-readiness.mjs` | the **real project**, no browser: the CLI is logged in; the hosting URL answers and serves the build in `dist/`; anonymous sign-in; Gemini through AI Logic with the registered App Check debug token | **4 / 5** — hosting serves the deployed build ✓ · anonymous sign-in **enabled** (since 2026-11-26 03:08) ✓ · Gemini **refused** (`FREE_TIER_UNAVAILABLE`, HTTP 403) ✗ |
+| the **hosted URL** in a headless browser, fresh profile | the app in use on `https://sitescribe-5998a.web.app/`: the sign-in settles in 4 s → “No projects yet” → a project is created → a capture answers in 1.0 s with the badge `⚙ Rule-based fallback (the cloud engine is not available on this project)` → `⏳ pending sync` → `✓ synced` after 6 s; the only failing request is the 403 of `generateContent` | observed 2026-11-26, 03:09–03:10 |
+| a local **live-mode** build against the real project, headless Chrome | what the hosted app showed while anonymous sign-in was still off (until 03:08 that day): the Projects panel says “This deployment has not enabled anonymous sign-in (CONFIGURATION_NOT_FOUND) … Reloading the page does not help until then.”, ＋ New is refused with the same reason; the Remote Config fetch itself succeeds (`no-change` after 1.9 s) | observed 2026-11-26, 02:42–02:53 |
 | clean copy (`git archive`) → `npm ci` → `check` / `test` / `build` → served by the hosting emulator | the quick-start needs nothing but this repository | install ok · 0 errors · 104 pass + 1 skipped (it reads the video script, which lives next to the repo) · build ok · app served (2026-11-25) |
 
 † 2026-11-25: port 8080 was held by an unrelated service on that machine, so the suite ran on a clean copy whose only difference was the Firestore emulator port (8090 instead of 8080). The last run with the standard configuration was on 2026-11-24: 19 / 19.
 
-**Never observed for real: a cloud answer.** `☁ Cloud · Gemini` and `↘ Fell back to cloud · Gemini` have only ever been seen as the labelled demo simulation. On 2026-11-26 the project behind the hosted URL answered every AI Logic call with HTTP 403 “The Gemini API free tier is not available for this project” — the builder's Google account cannot use the free tier until a device is verified or billing is linked. For the same reason **App Check is not proven end to end**: the registered debug token exchanges for an App Check token, but the request is refused the same way with a garbage token and with none at all, so nothing shows yet that AI Logic accepts the attestation. Only a Gemini answer through AI Logic would.
+**Never observed for real: a cloud answer.** `☁ Cloud · Gemini` and `↘ Fell back to cloud · Gemini` have only ever been seen as the labelled demo simulation. On 2026-11-26 the project behind the hosted URL answered every AI Logic call with HTTP 403 “The Gemini API free tier is not available for this project” — the builder's Google account cannot use the free tier until a device is verified or billing is linked. For the same reason **App Check is not proven end to end**: the registered debug token exchanges for an App Check token, but the request is refused the same way with a garbage token and with none at all, so nothing shows yet that AI Logic accepts the attestation. Only a Gemini answer through AI Logic would. On the hosted URL, only capture and sync have been exercised so far; Q&A, the severity check and report drafting have not been clicked there.
 
 Nothing on the on-device path can fake a pass: `e2e-ondevice.mjs` accepts only a genuine on-device badge and exits 2 (`tools/ondevice-proof.json` → `model-not-available`) when the model is absent.
 
@@ -144,17 +145,17 @@ node scripts/firebase-bootstrap.mjs --existing-project --project-id <id>   # a p
 node scripts/firebase-bootstrap.mjs --deploy-only                          # rebuild + redeploy after any change
 ```
 
-Creates (or adopts) the Firebase project and its web app, creates the Firestore database, writes `.env` (git-ignored), deploys hosting + Firestore rules + Remote Config, and verifies what it can (anonymous sign-in probe via `accounts:signUp`, hosting URL fetch). `--dry-run` prints every step without touching anything.
+Creates (or adopts) the Firebase project and its web app, creates the Firestore database, writes `.env` (git-ignored), deploys hosting + Firestore rules and indexes + Remote Config + the Authentication providers `firebase.json` declares, and verifies what it can (anonymous sign-in probe via `accounts:signUp`, hosting URL fetch). `--dry-run` prints every step without touching anything.
 
 What the project behind the hosted URL needed beyond that (2026-11-26), and who can do it:
 
 | Piece | How | Who |
 |---|---|---|
-| Hosting, Firestore rules and indexes, Remote Config | `firebase deploy` — the bootstrap's step 5 | the CLI |
+| Hosting, Firestore rules and indexes, Remote Config, the declared Authentication providers | `firebase deploy` — the bootstrap's step 5 | the CLI |
 | **AI Logic with the Gemini Developer API provider** | `FIREBASE_CLI_EXPERIMENTS=ailogic firebase ailogic:providers:enable gemini-developer-api --project <projectId>`; the console's *AI Logic → Get started* sets the provider up as well. Until the project's AI Logic configuration exists, every call answers “Firebase AI Logic genai config not found” | the CLI or the console |
 | **App Check** | either a debug token registered for the web app — `firebase appcheck:debugtokens:create <uuid> --app <appId> --display-name <name> --no-save-local`, its value in `.env` as `VITE_APPCHECK_DEBUG_TOKEN` — or a reCAPTCHA site key registered under *App Check → Apps → web app → Register*, as `VITE_RECAPTCHA_SITE_KEY` (real attestation; the better choice for a public URL) | the CLI or the console |
 | **Gemini API free tier** | it may be **unavailable for your Google account**: every call then answers HTTP 403 “The Gemini API free tier is not available for this project”. Verify a device at `https://aistudio.google.com/verify?project=<projectId>` (free), or link billing at `https://aistudio.google.com/billing` | **the account owner only** |
-| **Authentication → Anonymous** | *Firebase console → the project → Authentication → Sign-in method → Anonymous → Enable → Save*. Or, as [Firebase's documentation](https://firebase.google.com/docs/auth/configure-providers-cli) describes, `firebase init auth` with `"anonymous": true` in `firebase.json`, then `firebase deploy --only auth` — not tried on the project behind the hosted URL. On 2026-11-26 that project had no Identity Toolkit configuration yet (its owner had not opened Authentication in the console) and the admin REST calls answered `CONFIGURATION_NOT_FOUND`; until the provider is on, the app cannot sign in | the project's owner |
+| **Authentication → Anonymous** | declared in `firebase.json` — `"auth": {"providers": {"anonymous": true}}` — and deployed with everything else; `firebase deploy --only auth` alone is the [route Firebase documents](https://firebase.google.com/docs/auth/configure-providers-cli). Done on 2026-11-26 at 03:08 on a project whose Authentication page had never been opened: until then `accounts:signUp` answered `CONFIGURATION_NOT_FOUND`, since then 200. (The console's *Authentication → Sign-in method → Anonymous → Enable* does the same.) Every deploy switches a declared provider back on if it was turned off in the console; to remove it for good, delete the entry first | the CLI |
 
 > App Check is required by Firebase AI Logic (enforced since 2026-11-02). The app resolves its provider at build time: the debug provider on localhost, `VITE_RECAPTCHA_SITE_KEY` (v3, or Enterprise with `VITE_RECAPTCHA_PROVIDER=enterprise`) or `VITE_APPCHECK_DEBUG_TOKEN` from `.env` — see `.env.example`.
 >
@@ -181,17 +182,17 @@ Two things the script does **not** prove:
 - **(d) needs a `VITE_APPCHECK_DEBUG_TOKEN` in `.env`:** the script can exchange a debug token but cannot produce reCAPTCHA attestation. If the deployed bundle uses `VITE_RECAPTCHA_SITE_KEY`, it says so and (d) is reported as not probed — check the hosted URL in a browser instead.
 - **An exchanged App Check token is not proof that AI Logic accepts the attestation.** While the Gemini side refuses the call, it refuses it with a valid token, a garbage one and none at all alike. Only a Gemini answer through AI Logic — a green (d) — shows App Check end to end.
 
-Two steps that no script in this repository takes. On the project behind the hosted URL both were still open on 2026-11-26:
+Two steps the app cannot take for itself. On the project behind the hosted URL the first was done at 03:08 on 2026-11-26 — by a deploy — and the second is still open:
 
 | Step | Where | Done when |
 |---|---|---|
-| Enable anonymous sign-in | Firebase console → the project → **Authentication → Sign-in method → Anonymous → Enable → Save** | (c) reads `ENABLED ✓` |
+| Enable anonymous sign-in | declared in `firebase.json` (`"auth": {"providers": {"anonymous": true}}`) and deployed with the rest; or *Firebase console → the project → **Authentication → Sign-in method → Anonymous → Enable → Save*** | (c) reads `ENABLED ✓` — it has since 2026-11-26 03:08 |
 | Gemini API free tier — it may be unavailable for your Google account | verify a device at `https://aistudio.google.com/verify?project=<projectId>` (free), or link billing at `https://aistudio.google.com/billing` | (d) reads `OK ✓` |
 
 ## Run with Firebase
 
 1. Wire the project as above. `.env` holds the web app's config as `VITE_FIREBASE_CONFIG`.
-2. `npm run build` bakes that config into `dist/`; `firebase deploy` (or the bootstrap) serves it at `https://<projectId>.web.app`.
+2. `npm run build` bakes that config into `dist/`; `firebase deploy` (or the bootstrap) serves it at `https://<projectId>.web.app` and switches on the Authentication providers `firebase.json` declares.
 3. `npm run dev` on `localhost` runs **live mode** against the same project. *(The demo-mode e2e suite needs the config blanked once a `.env` exists: `VITE_FIREBASE_CONFIG= npm run dev -- --port 5187 --strictPort`.)*
 4. Before you record or submit: `node scripts/live-readiness.mjs`.
 
