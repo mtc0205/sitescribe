@@ -319,7 +319,7 @@ When a budget runs out (`withinBudget()` in `src/engine.ts`, unit-tested): F1 an
 | A9 | Demo and emulator mode fake no engine: badges read rule-based / no engine / needs a connection | `e2e-full`, `e2e-emulator` | pass |
 | A10 | Real SDK chain: anonymous sign-in, an offline write is absent from the server and arrives after reconnect, the chip flips, rules reject cross-user access | `e2e-emulator` | 27 / 27 (2026-11-25, Firestore emulator port moved — §12) |
 | A11 | The app renders after an offline hard reload and the records survive it | `e2e-emulator` | 27 / 27 |
-| A12 | With the model installed and the network cut, the F1 and F2 badges come from `inferenceSource === "on_device"` | `e2e-ondevice` | 2 / 2 — four runs on 2026-11-25 (15:03, 19:18, 19:44, 19:49); the last three on the final capture path, the last on the final commit |
+| A12 | With the model installed and the network cut, the F1 and F2 badges come from `inferenceSource === "on_device"` | `e2e-ondevice` | 2 / 2 — four runs on 2026-11-25 (15:03, 19:18, 19:44, 19:49); the last three on the final capture path, the last with a clean tree |
 | A13 | Every checked text / background pair is at least 4.5 : 1 | `ui-screens.mjs` | 160 / 160, minimum 5.7 : 1 |
 | A14 | The first capture does not wait for the model download | manual probe, 2026-11-24 | observed; no automated assertion |
 | A15 | Real cloud badge, real fell-back badge, hosted URL, production App Check | — | **never observed** (§13) |
@@ -363,7 +363,7 @@ node scripts/firebase-bootstrap.mjs --dry-run   # prints the project-bootstrap s
 - A hung network: every AI Logic request paused and never answered; F1 fell back after 12.4 s, F4 + F2 + F3 together after 12.3 s, each to its own honest state (`e2e-full`, e2e-23).
 - The real Firebase SDK chain against the local Emulator Suite: anonymous auth, offline write queue, owner-only rules, PWA shell after an offline reload, that the demo-only URL switches have no effect there, that the AI Logic request names `gemini-3.8-flash`, and the first render with every Firebase / Google request held — `e2e-emulator` 27 / 27, on a copy with the Firestore emulator port moved (§12).
 - Contrast of every probed text / background pair — `ui-screens.mjs` 160 / 160 at 4.5 : 1 or above.
-- On-device inference with the network cut, on real Gemini Nano — `e2e-ondevice` 2 / 2, four times on 2026-11-25 (15:03, 19:18, 19:44, 19:49); the last three on the final capture path, the last on the final commit.
+- On-device inference with the network cut, on real Gemini Nano — `e2e-ondevice` 2 / 2, four times on 2026-11-25 (15:03, 19:18, 19:44, 19:49); the last three on the final capture path, the last with a clean tree.
 
 **Never observed** — all of it blocked on the same thing: no Firebase project exists yet (no `.env`, no login, never deployed):
 
