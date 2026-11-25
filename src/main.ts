@@ -6,7 +6,7 @@ import { initFirebase, runtime, remoteToggles, authReady, getAuthState, onRemote
 import { structureNote, askFieldQuestion, draftReport, crossCheckSeverity, warmDeviceModel, deviceAvailability, onEngineUpdate, deviceApiAvailable, initEngineSimulationFromUrl, engineSimulation, getEngineLog } from "./ai";
 import { store, seedIfEmpty, onStoreChange } from "./store";
 import { ruleBasedStructure } from "./extract";
-import { recordEngine, recordEngineLabel } from "./engine";
+import { recordEngine, recordEngineLabel, SYSTEM, takesChip } from "./engine";
 import { featureGate, type FeatureGate, type GatedFeature } from "./flags";
 import { formatRecordTime, formatLogTime, localDateTime, zoneLabelNow } from "./format";
 import type { AiAnswer, DefectRecord, EngineBadgeInfo, Project } from "./types";
@@ -19,10 +19,13 @@ let deviceWarmed = false;
 /** Chrome's answer for the on-device model; "unknown" until the first probe resolves. */
 type DeviceState = "unknown" | "available" | "downloadable" | "downloading" | "unavailable" | "no-api";
 let deviceState: DeviceState = "unknown";
-/** Most recent engine event of this session (null until one happens). Download
- *  progress ticks are kept apart: they must not drown out the badge of the last
+/** The status chip shows the badge of the latest answer (null until the first one). */
+let answerBadge: EngineBadgeInfo | null = null;
+/** The latest model-state line from the warm-up ("model ready", "model unavailable", …).
+ *  It has the chip only until the first answer exists — an answer's badge wins. */
+let modelStateBadge: EngineBadgeInfo | null = null;
+/** Download progress ticks are kept apart: they must not drown out the badge of the last
  *  answer while the model is still being fetched in the background. */
-let lastEngineBadge: EngineBadgeInfo | null = null;
 let downloadBadge: EngineBadgeInfo | null = null;
 
 /** A real cloud backend is configured (a Firebase project, not the emulators). */
@@ -71,7 +74,7 @@ function badgeHtml(badge: EngineBadgeInfo): string {
 /** Status chip for the top bar. Before any engine event it states, neutrally and truthfully,
  *  which engine is on duty — never "…" and never an error-looking "unavailable". */
 function engineChipHtml(): string {
-  const current = lastEngineBadge ?? downloadBadge;
+  const current = answerBadge ?? modelStateBadge ?? downloadBadge;
   const sim = engineSimulation();
   let cls: string;
   let text: string;
@@ -94,7 +97,7 @@ function engineChipHtml(): string {
     text = "⚙ Rule-based structuring";
   }
   const title = current
-    ? `Last engine event: ${current.label}. Every answer and record carries its own badge.`
+    ? `Status chip: ${current.label}. Every answer and record carries its own badge.`
     : "Which engine is on duty. Every answer and record carries its own badge.";
   return `<span id="engine-chip" class="engine-chip ${cls}" data-testid="engine-chip" title="${escapeHtml(title)}">${escapeHtml(text)}</span>`;
 }
@@ -253,7 +256,7 @@ async function probeDevice(): Promise<void> {
         : "no-api";
 
   // Engine chip (only while no engine event has happened yet).
-  if (!lastEngineBadge && !downloadBadge) updateEngineChip();
+  if (!answerBadge && !modelStateBadge && !downloadBadge) updateEngineChip();
   updateDeviceUi();
 
   // Raw telemetry facts (kept verbatim — this is the diagnostics view).
@@ -736,14 +739,19 @@ onStoreChange(() => {
   if (activeProject) void refreshRecords();
 });
 
-onEngineUpdate((badge) => {
+onEngineUpdate((badge, event) => {
   if (badge.engine === "download") {
     // Background download: remember the latest tick, never replace the badge of
     // the last answer with it, and never fill the status bar with progress.
     downloadBadge = badge;
     deviceState = "downloading";
-  } else {
-    lastEngineBadge = badge;
+  } else if (takesChip(answerBadge !== null, badge, event.feature)) {
+    // An answer always takes the chip; a model-state line only before the first
+    // answer. Once there is an answer, the warm-up's closing line ("model
+    // unavailable", …) no longer pushes its badge off the chip — it still goes to
+    // the engine log and the diagnostics.
+    if (event.feature === SYSTEM) modelStateBadge = badge;
+    else answerBadge = badge;
     downloadBadge = null;
   }
   updateEngineChip();

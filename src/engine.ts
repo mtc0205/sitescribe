@@ -26,6 +26,23 @@ export function hybridModelParams<M extends string>(mode: M, cloudModel: string)
 /** What the SDK reports as the source of a reply (`GenerateContentResponse.inferenceSource`). */
 export type InferenceSource = "on_device" | "in_cloud";
 
+/** The feature tag of an engine event that is not an answer: model state and download
+ *  progress (see warmDeviceModel in ai.ts). */
+export const SYSTEM = "system";
+
+/**
+ * Does `badge` take the status chip (SPEC §6.3)? An answer's badge always does. A
+ * model-state line — the warm-up's "model ready" / "model unavailable" / "still
+ * downloading" — only while no answer has taken the chip yet: once there is an answer,
+ * its badge stays and the line goes to the engine log and the diagnostics alone. A
+ * download tick never does (the caller keeps those apart). Until 2026-11-25 the warm-up's
+ * closing line pushed the badge of the first answer off the chip.
+ */
+export function takesChip(hasAnswer: boolean, badge: EngineBadgeInfo, feature: string): boolean {
+  if (badge.engine === "download") return false;
+  return feature !== SYSTEM || !hasAnswer;
+}
+
 /** Badge for a reply the SDK delivered. One without `inferenceSource` is badged
  *  "Engine unknown" — the field is optional, and the engine is never guessed. */
 export function badgeFromSource(source: InferenceSource | undefined, requestedOnDevice: boolean): EngineBadgeInfo {

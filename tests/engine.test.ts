@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { badgeFromSource, recordEngine, recordEngineLabel, settleStructureReply, hybridModelParams } from "../src/engine.ts";
+import { badgeFromSource, recordEngine, recordEngineLabel, settleStructureReply, hybridModelParams, takesChip, SYSTEM } from "../src/engine.ts";
 import { ruleBasedStructure } from "../src/extract.ts";
 import { DEFAULT_CLOUD_MODEL } from "../src/flags.ts";
 import type { EngineBadgeInfo } from "../src/types.ts";
@@ -133,4 +133,25 @@ test("recordEngineLabel: only a record made under the demo simulation says (simu
     assert.doesNotMatch(recordEngineLabel(extractedBy), /simulated/i); // a real record never does
   }
   assert.doesNotMatch(recordEngineLabel("rule_based", true), /simulated/i); // its fields really are the rules'
+});
+
+// ---- the status chip: an answer's badge wins ----
+
+test("takesChip: an answer's badge keeps the status chip; a model-state line that follows does not take it", () => {
+  const answer = badgeFromSource("in_cloud", true); // "Fell back to cloud · Gemini"
+  const warmUpLine: EngineBadgeInfo = { engine: "unavailable", label: "On-device model not available", short: "On-device model unavailable" };
+  const tick: EngineBadgeInfo = { engine: "download", downloadProgress: 0.3, label: "Downloading on-device model · 30%" };
+  // Before any answer, model state has the chip (boot preload, the first click's warm-up) …
+  assert.equal(takesChip(false, warmUpLine, SYSTEM), true);
+  // … an answer always takes it …
+  assert.equal(takesChip(false, answer, "F1 structure"), true);
+  assert.equal(takesChip(true, badgeFromSource("on_device", true), "F2 field QA"), true);
+  // … and once there is an answer, the warm-up's closing line does not — until 2026-11-25
+  // it pushed the badge of the first answer off the chip on a browser without the model.
+  assert.equal(takesChip(true, warmUpLine, SYSTEM), false);
+  assert.equal(takesChip(true, { engine: "pending", label: "On-device model ready" }, SYSTEM), false);
+  assert.equal(takesChip(true, { engine: "unavailable", label: "On-device model still downloading", short: "On-device model downloading" }, SYSTEM), false);
+  // Download ticks never take it, answer or not.
+  assert.equal(takesChip(false, tick, SYSTEM), false);
+  assert.equal(takesChip(true, tick, SYSTEM), false);
 });

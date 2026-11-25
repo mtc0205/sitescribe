@@ -396,8 +396,13 @@ await simPage.screenshot({ path: SHOTS + "\\e2e-19-sim-session.png", fullPage: t
 await simPage.click("#back");
 await simPage.waitForSelector("#engine-panel");
 await simPage.click("#engine-panel > summary");
+// The first click also runs the model warm-up; on a browser without the model its closing
+// line (a "system" row) lands after the first — here simulated, i.e. instant — answer.
+await poll(simPage, () => ([...document.querySelectorAll("#engine-log-list .log-row code")].some((c) => c.textContent.trim() === "system") ? true : null), { timeoutMs: 6000 });
 const simLog = await simPage.evaluate(() => ({
   rows: [...document.querySelectorAll("#engine-log-list .log-row .chip")].map((c) => c.textContent.replace(/\s+/g, " ").trim()),
+  features: [...document.querySelectorAll("#engine-log-list .log-row code")].map((c) => c.textContent.trim()),
+  chip: document.querySelector("#engine-chip")?.textContent ?? null,
   summary: document.querySelector("#engine-summary")?.textContent ?? null,
   allRows: document.querySelectorAll("#engine-log-list .log-row").length,
 }));
@@ -406,6 +411,16 @@ check(
   "sim_cloud · every cloud row of the engine log, and the diagnostics summary, say (simulated)",
   cloudRows.length >= 4 && cloudRows.every((t) => SIM.test(t)) && SIM.test(simLog.summary ?? ""),
   JSON.stringify({ cloudRows, summary: simLog.summary, allRows: simLog.allRows }),
+);
+// Until 2026-11-25 the warm-up's closing line replaced the first answer's badge in the
+// status chip. An answer's badge wins now (takesChip, unit-tested); when a system row did
+// arrive in this run, this is the on-screen proof.
+check(
+  simLog.features.includes("system")
+    ? "sim_cloud · the warm-up's closing line (system row in the log) does not push the answer's badge off the status chip"
+    : "sim_cloud · the status chip shows the simulated answer (no warm-up line arrived in this run to contest it)",
+  SIM.test(simLog.chip ?? ""),
+  JSON.stringify({ chip: simLog.chip, features: simLog.features }),
 );
 await simPage.screenshot({ path: SHOTS + "\\e2e-20-sim-diagnostics.png" });
 

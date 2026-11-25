@@ -8,6 +8,7 @@
 import type { AiAnswer, EngineBadgeInfo } from "./types";
 import { ruleBasedStructure, type DefectJson } from "./extract";
 import {
+  SYSTEM,
   badgeFromSource,
   hybridModelParams,
   settleStructureReply,
@@ -68,8 +69,10 @@ const REPORT_PROMPT = `You are drafting a field inspection report section from s
 Group related defects by component, keep every measurement verbatim, flag records with severity "severe" or "moderate" for engineer review, and end with a short "Recommended follow-up" list.
 Output clean Markdown.`;
 
-/** Callback subscribers for engine state shown in the status bar. */
-type EngineListener = (badge: EngineBadgeInfo) => void;
+/** Callback subscribers for engine state shown in the status bar: the badge, and the
+ *  feature the event belongs to — SYSTEM for model state and download progress, so the
+ *  subscriber can keep an answer's badge on the chip when a model-state line follows it. */
+type EngineListener = (badge: EngineBadgeInfo, event: { feature: string }) => void;
 const engineListeners = new Set<EngineListener>();
 export function onEngineUpdate(fn: EngineListener): () => void {
   engineListeners.add(fn);
@@ -87,14 +90,14 @@ const engineLog: EngineLogEntry[] = [];
 export function getEngineLog(): readonly EngineLogEntry[] {
   return engineLog;
 }
-function emitEngine(badge: EngineBadgeInfo, feature = "system") {
+function emitEngine(badge: EngineBadgeInfo, feature: string = SYSTEM) {
   const entry: EngineLogEntry = { ts: new Date().toISOString(), feature, badge };
   // Download progress ticks every second or so: keep ONE rolling entry for the
   // download instead of flooding the log (50 ticks would hide every real event).
   if (badge.engine === "download" && engineLog[0]?.badge.engine === "download") engineLog[0] = entry;
   else engineLog.unshift(entry);
   if (engineLog.length > 50) engineLog.length = 50;
-  engineListeners.forEach((fn) => fn(badge));
+  engineListeners.forEach((fn) => fn(badge, { feature }));
 }
 
 /* ---------- engine simulation (demo mode only, always labelled) ----------
