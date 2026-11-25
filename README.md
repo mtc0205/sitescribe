@@ -139,6 +139,31 @@ Creates the Firebase project, web app, Firestore database, writes `.env` (git-ig
 
 > App Check is required by Firebase AI Logic (auto-enforced since 2026-11-02). The app resolves it at build time: debug provider on localhost, `VITE_RECAPTCHA_SITE_KEY` (recommended for the hosted URL) or `VITE_APPCHECK_DEBUG_TOKEN` (accepted by the hackathon rules) from `.env` — see `.env.example`.
 
+## Before you record / before you submit
+
+```bash
+npm run build                            # so that (b) compares the hosted page with the current build
+node scripts/live-readiness.mjs          # [--model <name>], default gemini-3.8-flash
+```
+
+One command, no browser. It reads `.env`, changes nothing in the project, and prints no key and no token:
+
+- **(a)** whether the Firebase CLI is logged in, and the project the app is wired to;
+- **(b)** whether the hosting URL answers, and whether the page it serves is the build in `dist/` — the hashed asset names of the served `index.html` against the local one;
+- **(c)** whether anonymous sign-in is enabled (`POST accounts:signUp` with an empty body; when it is not, it says which of `CONFIGURATION_NOT_FOUND` / `ADMIN_ONLY_OPERATION` / `OPERATION_NOT_ALLOWED` came back). The probe signs up one anonymous user when it succeeds, as the bootstrap does;
+- **(d)** whether Gemini answers through AI Logic — the real SDK, the App Check debug token exchanged the way the SDK's debug provider does, then one `generateContent`. A refusal is classified as `FREE_TIER_UNAVAILABLE`, `GENAI_CONFIG_NOT_FOUND`, `APP_CHECK`, `NETWORK` or `OTHER`, with the server's words.
+
+Then a two-line verdict names the step that is still missing. Exit 0 only when every check is green, 1 when something is red, 2 without a `.env`. Run it after every console click and every deploy.
+
+**(d) needs a `VITE_APPCHECK_DEBUG_TOKEN` in `.env`:** the script can exchange a debug token but cannot produce reCAPTCHA attestation. If the deployed bundle uses `VITE_RECAPTCHA_SITE_KEY`, it says so and (d) is reported as not probed — check the hosted URL in a browser instead.
+
+Two steps only the account owner can take; no API or CLI command does either:
+
+| Step | Where | Done when |
+|---|---|---|
+| Enable anonymous sign-in | Firebase console → the project → **Authentication → Sign-in method → Anonymous → Enable → Save** | (c) reads `ENABLED ✓` |
+| Gemini API free tier — it may be unavailable for your Google account | verify a device at `https://aistudio.google.com/verify?project=<projectId>` (free), or link billing at `https://aistudio.google.com/billing` | (d) reads `OK ✓` |
+
 ## Run with Firebase
 
 1. Create a Firebase project; add a Web app; copy the config.
