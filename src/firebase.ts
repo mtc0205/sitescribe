@@ -21,6 +21,7 @@ import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import { getAI, GoogleAIBackend } from "firebase/ai";
 import { initAI, setCloudModel } from "./ai";
 import { parseFlagOverrides, DEFAULT_CLOUD_MODEL, FEATURE_DEFAULTS } from "./flags";
+import { signInFailure, type SignInFailure } from "./signin";
 
 const EMULATOR = import.meta.env.VITE_USE_EMULATOR === "1";
 const RAW_CONFIG = import.meta.env.VITE_FIREBASE_CONFIG as string | undefined;
@@ -106,7 +107,9 @@ export type AuthState =
   | { state: "none" } // demo mode: no Firebase Auth
   | { state: "pending" } // no anonymous user yet; the sign-in is under way
   | { state: "signed-in"; uid: string }
-  | { state: "failed"; error: string };
+  // `failure` says whether the deployment allows the sign-in at all (signin.ts): the panel
+  // must not answer "enable it in the console" with "check the connection".
+  | { state: "failed"; error: string; failure: SignInFailure };
 
 let authState: AuthState = { state: "none" };
 export function getAuthState(): AuthState {
@@ -235,7 +238,7 @@ export async function initFirebase(): Promise<RuntimeMode> {
   } else {
     void signInAnonymously(auth).catch((e) => {
       console.warn(`[auth] anonymous sign-in failed${EMULATOR ? " (emulator)" : ""}:`, e);
-      authState = { state: "failed", error: String(e) };
+      authState = { state: "failed", error: String(e), failure: signInFailure(e) };
       failAuthReady(e);
     });
   }

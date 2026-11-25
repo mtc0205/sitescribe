@@ -7,6 +7,7 @@ import { structureNote, askFieldQuestion, draftReport, crossCheckSeverity, warmD
 import { store, seedIfEmpty, onStoreChange } from "./store";
 import { ruleBasedStructure } from "./extract";
 import { recordEngine, recordEngineLabel, SYSTEM, takesChip } from "./engine";
+import { signInFailureText } from "./signin";
 import { featureGate, type FeatureGate, type GatedFeature } from "./flags";
 import { formatRecordTime, formatLogTime, localDateTime, zoneLabelNow } from "./format";
 import type { AiAnswer, DefectRecord, EngineBadgeInfo, Project } from "./types";
@@ -348,7 +349,8 @@ function refreshEngineLog(): void {
 
 /** The Projects panel. In live and emulator mode it needs the anonymous user — who may still
  *  be signing in, because the first render never waits for the network (firebase.ts) — so
- *  it says that instead of pretending there are no projects. */
+ *  it says that instead of pretending there are no projects. A sign-in the deployment does
+ *  not allow is said so too, not as a connection problem (signin.ts). */
 async function refreshProjects(): Promise<void> {
   const list = document.querySelector("#project-list");
   if (!list) return;
@@ -358,7 +360,7 @@ async function refreshProjects(): Promise<void> {
     return;
   }
   if (auth.state === "failed") {
-    list.innerHTML = `<div class="empty" data-testid="auth-state">Could not sign in (${escapeHtml(auth.error.slice(0, 160))}) — projects and records need the anonymous sign-in. Check the connection and reload the page.</div>`;
+    list.innerHTML = `<div class="empty" data-testid="auth-state">${escapeHtml(signInFailureText(auth.failure, auth.error).panel)}</div>`;
     return;
   }
   const projects = await store.listProjects();
@@ -384,10 +386,11 @@ function structureLabel(t: Project["structureType"]): string {
 
 async function onNewProject(): Promise<void> {
   // A project needs an owner. The sign-in is not awaited for the first render, so it may
-  // still be under way — or have failed on an unreachable network.
+  // still be under way — or have failed on an unreachable network, or because the
+  // deployment does not allow it (signin.ts).
   const auth = getAuthState();
   if (auth.state === "pending" || auth.state === "failed") {
-    alert(auth.state === "pending" ? "Still signing in — try again in a moment." : "Not signed in: projects cannot be saved without the anonymous sign-in. Check the connection and reload the page.");
+    alert(auth.state === "pending" ? "Still signing in — try again in a moment." : signInFailureText(auth.failure, auth.error).alert);
     return;
   }
   const name = prompt("Project name (e.g. Girder Bridge No.3):");
@@ -782,8 +785,12 @@ function escapeHtml(s: string): string {
     void authReady.then(async () => {
       await seedIfEmpty();
       if (!activeProject) await refreshProjects();
-      // A sign-in failure is stated in the Projects panel (refreshProjects).
-    }, () => {});
+    }, () => {
+      // The sign-in failed: the Projects panel still says "Signing in anonymously…" —
+      // replace it with what happened (refreshProjects). Until 2026-11-26 nothing redrew
+      // the panel on a failure, so the reason never reached the screen.
+      void refreshProjects();
+    });
   }
   // Preload an already-installed on-device model so the first capture does not
   // wait for the weights to load. This never starts a download — that still
