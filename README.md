@@ -7,13 +7,13 @@ Capture structured defect records inside signal-dead structures — bridge under
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Hackathon](https://img.shields.io/badge/hackathon-Firebase%20%23BuildHybridAI-ffca28?logo=firebase&logoColor=black)](https://firebase.google.com/docs/ai-logic)
 [![Engines](https://img.shields.io/badge/engines-Gemini%20Nano%20on--device%20%C2%B7%20cloud%20Gemini-34d399)](docs/SPEC.md)
-[![Last verified](https://img.shields.io/badge/last%20verified-2026--11--25-brightgreen)](#verified-state)
+[![Last verified](https://img.shields.io/badge/last%20verified-2026--11--26-brightgreen)](#verified-state)
 
 > Built for the Firebase **#BuildHybridAI 2026** hackathon (Web / Chrome platform).
 
 ## Screenshots
 
-Taken from a local **demo-mode** build (no Firebase project wired up — the status bar says `local demo`).
+Taken from a local **demo-mode** build — the status bar says `local demo`; that mode needs no Firebase project.
 
 | | |
 |---|---|
@@ -51,12 +51,12 @@ npm install
 npm run dev
 ```
 
-Open the printed URL in **Chrome 139+**, enable `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input`, restart, then click **⚡ Capture** once — the on-device model downloads on first use (progress shows in the status chip). (`npm run dev` uses port 5173; if that is taken on your machine: `npm run dev -- --port 5187 --strictPort`.)
+Open the printed URL in **Chrome 139+**, enable `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input`, restart, then click **⚡ Capture** once — the on-device model downloads on first use (progress shows in the status chip). (`npm run dev` uses port 5173; if that is taken on your machine: `npm run dev -- --port 5187 --strictPort`. A `.env` with a Firebase config switches the dev server to live mode; for demo mode blank it: `VITE_FIREBASE_CONFIG= npm run dev`.)
 
 What you get in demo mode:
 
 - Everything is stored locally; **the on-device path is real** if Chrome has the model, cloud calls fail honestly because no project is configured.
-- **The first click never waits for the model.** On a browser without Gemini Nano, the first **⚡ Capture** starts Chrome's background download and the note is structured right away — by cloud Gemini once a project is wired up, here by the labelled rule-based fallback. Download progress shows in the status chip **only until the first answer exists**; after that the chip shows the badge of the latest answer, and the progress is in the home-screen legend note and the *Engine & diagnostics* summary. Each answer's badge says which one ran; later captures switch to on-device once the model is ready.
+- **The first click never waits for the model.** On a browser without Gemini Nano, the first **⚡ Capture** starts Chrome's background download and the note is structured right away — in demo mode by the labelled rule-based fallback. With a Firebase project the cloud engine answers instead wherever the project can use the Gemini API; on the project behind the hosted URL that has not been observed yet (see [Verified state](#verified-state)). Download progress shows in the status chip **only until the first answer exists**; after that the chip shows the badge of the latest answer, and the progress is in the home-screen legend note and the *Engine & diagnostics* summary. Each answer's badge says which one ran; later captures switch to on-device once the model is ready.
 - The **status bar** always states which engine is on duty — `⚡ On-device ready`, `☁ Cloud engine · on-device optional`, or `⚙ Rule-based structuring` — and after each request shows the badge of the engine that answered. It keeps that badge: the model warm-up's own status line ("On-device model unavailable", …) goes to the engine log, not over an answer.
 - **A hung connection does not hang the app.** Every call runs under a time budget (12 s in demo mode on a browser without the model). If the network neither answers nor fails, capture and the severity check fall back to the labelled rules, a question gets "No engine answered in time", and report drafting "Report drafting timed out". A reply that arrives after the budget is dropped.
 - *Check severity vs reference* does the same on the capture preview and on every record in the list.
@@ -68,23 +68,29 @@ For UI demonstrations of the cloud badge states before a Firebase project is wir
 
 Two Remote Config keys are kill-switches: `feature_report_drafting` and `feature_severity_check`, both on by default. When one is `false` the feature is not offered — its control is disabled, one line under *Records* says why, and no request is sent. Demo mode has no Remote Config, so the same state can be tried with `?feature_report_drafting=false` and/or `?feature_severity_check=false` (demo mode only).
 
-With a Firebase project the app renders before the anonymous sign-in or Remote Config answers, so the page opens even where Google is unreachable; the Projects panel says “Signing in anonymously…” until the sign-in gets through. Fetched Remote Config values are applied whenever they arrive.
+With a Firebase project the app renders before the anonymous sign-in or Remote Config answers, so the page opens even where Google is unreachable; the Projects panel says “Signing in anonymously…” until the sign-in gets through. If the deployment has not enabled anonymous sign-in, the panel says that instead — with the console path that changes it, and that reloading will not help; any other failure of the sign-in keeps the advice to check the connection. Fetched Remote Config values are applied whenever they arrive.
+
+When the project cannot use the Gemini API (below), every answer names the cause in its badge — for example `⚙ Rule-based fallback (the cloud engine is not available on this project)` — instead of the `no AI engine reachable` wording that would send the reader after a connection that is fine. The record is rule-based, as for any failed call.
 
 ## Verified state
 
-Last run on 2026-11-25 (Windows, Chrome 158, Node 24) against this exact tree, except the two rows that carry their own date:
+Last run on 2026-11-26 (Windows, Chrome 158, Node 24) against this exact tree for `check`, `test`, `e2e-full` and `live-readiness`; every other row carries the date of its own last run.
 
 | Command | What it proves | Result |
 |---|---|---|
 | `npm run check` | TypeScript, strict | 0 errors |
-| `npm test` | rule-based extraction, engine attribution, call budgets and late replies, simulation texts, Remote Config feature switches, conflict merge, pending queue, bootstrap env writer, local-time formatting, video timeline maths | 105 / 105 |
-| `node scripts/e2e-full.mjs` | demo-mode loop on a fresh browser profile: seeds, local + zoned timestamps, a half-typed note survives a connectivity change, online capture synced, offline capture pending → synced, F1–F4; the two capture edge cases (a reply that cannot be used, a reply with no engine named) with canned SDK replies; simulation labelling; the feature switches; a hung network, where every call falls back within its budget and a late reply changes nothing | 38 / 38 |
-| `node scripts/e2e-emulator.mjs` | the **real Firebase SDK** chain (Auth, Firestore, Remote Config) against the local Emulator Suite: anonymous sign-in, offline write not on the server → arrives after reconnect, rules reject cross-user access (403), PWA shell renders after an offline reload, the demo-only URL switches have no effect there, the AI Logic request names the configured cloud model, and the first render does not wait for the network — with every Firebase / Google request held, the page still rendered at once (84 ms in that run) | 27 / 27 † |
+| `npm test` | rule-based extraction, engine attribution, call budgets and late replies, what a cloud refusal and a refused sign-in mean, simulation texts, Remote Config feature switches, conflict merge, pending queue, bootstrap env writer, the readiness checks' decisions, local-time formatting, video timeline maths | 135 / 135 |
+| `node scripts/e2e-full.mjs` | demo-mode loop on a fresh browser profile: seeds, local + zoned timestamps, a half-typed note survives a connectivity change, online capture synced, offline capture pending → synced, F1–F4; the two capture edge cases (a reply that cannot be used, a reply with no engine named) with canned SDK replies; simulation labelling; the feature switches; a hung network, where every call falls back within its budget and a late reply changes nothing; a cloud engine the project cannot use — the AI Logic request is answered with the real project's HTTP 403 and every badge, the status chip and every log row name the cause, the capture stays rule-based and the report is no report | 41 / 41 |
+| `node scripts/e2e-emulator.mjs` | the **real Firebase SDK** chain (Auth, Firestore, Remote Config) against the local Emulator Suite: anonymous sign-in, offline write not on the server → arrives after reconnect, rules reject cross-user access (403), PWA shell renders after an offline reload, the demo-only URL switches have no effect there, the AI Logic request names the configured cloud model, and the first render does not wait for the network — with every Firebase / Google request held, the page still rendered at once (84 ms in that run) | 27 / 27 † (2026-11-25) |
 | `node scripts/e2e-ondevice.mjs` | **real Gemini Nano on-device**, network cut (any fetch fails): the capture and Q&A badges come from `inferenceSource === "on_device"` | 2 / 2 — four runs on 2026-11-25, the last three on the final capture path, the last with a clean tree |
-| `node scripts/ui-screens.mjs` | WCAG contrast of every text/background pair, computed from real styles (all ≥ 4.5:1, minimum 5.7:1), plus a first-screen audit | exit 0 |
-| clean copy (`git archive`) → `npm ci` → `check` / `test` / `build` → served by the hosting emulator | the quick-start needs nothing but this repository | install ok · 0 errors · 104 pass + 1 skipped (it reads the video script, which lives next to the repo) · build ok · app served |
+| `node scripts/ui-screens.mjs` | WCAG contrast of every text/background pair, computed from real styles (all ≥ 4.5:1, minimum 5.7:1), plus a first-screen audit | exit 0 (2026-11-25) |
+| `node scripts/live-readiness.mjs` | the **real project**, no browser: the CLI is logged in; the hosting URL answers and serves the build in `dist/`; anonymous sign-in; Gemini through AI Logic with the registered App Check debug token | **3 / 5** — hosting serves the deployed build ✓ · anonymous sign-in **not enabled** (`CONFIGURATION_NOT_FOUND`) ✗ · Gemini **refused** (`FREE_TIER_UNAVAILABLE`, HTTP 403) ✗ |
+| a local **live-mode** build against the real project, headless Chrome | what a visitor sees while the two owner steps are pending: the Projects panel says “This deployment has not enabled anonymous sign-in (CONFIGURATION_NOT_FOUND) … Reloading the page does not help until then.”, ＋ New is refused with the same reason; the Remote Config fetch itself succeeds (`no-change` after 1.9 s) | observed 2026-11-26 |
+| clean copy (`git archive`) → `npm ci` → `check` / `test` / `build` → served by the hosting emulator | the quick-start needs nothing but this repository | install ok · 0 errors · 104 pass + 1 skipped (it reads the video script, which lives next to the repo) · build ok · app served (2026-11-25) |
 
 † 2026-11-25: port 8080 was held by an unrelated service on that machine, so the suite ran on a clean copy whose only difference was the Firestore emulator port (8090 instead of 8080). The last run with the standard configuration was on 2026-11-24: 19 / 19.
+
+**Never observed for real: a cloud answer.** `☁ Cloud · Gemini` and `↘ Fell back to cloud · Gemini` have only ever been seen as the labelled demo simulation. On 2026-11-26 the project behind the hosted URL answered every AI Logic call with HTTP 403 “The Gemini API free tier is not available for this project” — the builder's Google account cannot use the free tier until a device is verified or billing is linked. For the same reason **App Check is not proven end to end**: the registered debug token exchanges for an App Check token, but the request is refused the same way with a garbage token and with none at all, so nothing shows yet that AI Logic accepts the attestation. Only a Gemini answer through AI Logic would.
 
 Nothing on the on-device path can fake a pass: `e2e-ondevice.mjs` accepts only a genuine on-device badge and exits 2 (`tools/ondevice-proof.json` → `model-not-available`) when the model is absent.
 
@@ -94,6 +100,7 @@ node scripts/e2e-full.mjs                  # needs `npm run dev` (or --port <n>)
 node scripts/e2e-emulator.mjs              # builds, boots and stops the Emulator Suite itself
 node scripts/e2e-ondevice.mjs              # on-device proof — real on-device badge only, honest skip otherwise
 node scripts/ui-screens.mjs                # screenshots + contrast/first-screen audit → ../tools/
+node scripts/live-readiness.mjs            # the real project: is the hosted app ready? (needs .env, npm run build)
 ```
 
 ### Launching Chrome for on-device runs
@@ -132,12 +139,26 @@ Honesty guards: every render is stamped `TEST RENDER — not the final video`. `
 ## Ship it: one-command bootstrap (needs your Google login once)
 
 ```bash
-node scripts/firebase-bootstrap.mjs --login
+node scripts/firebase-bootstrap.mjs --login                               # a new project, end to end
+node scripts/firebase-bootstrap.mjs --existing-project --project-id <id>   # a project made in the Firebase console
+node scripts/firebase-bootstrap.mjs --deploy-only                          # rebuild + redeploy after any change
 ```
 
-Creates the Firebase project, web app, Firestore database, writes `.env` (git-ignored), deploys hosting + Firestore rules + Remote Config, and *verifies* what it can (anonymous sign-in probe via `accounts:signUp`, hosting URL fetch). `--dry-run` prints every step without touching anything; `--deploy-only` rebuilds and redeploys after you paste an App Check key. Remaining console clicks (Anonymous auth, AI Logic "Get started", App Check key) are printed with exact navigation paths.
+Creates (or adopts) the Firebase project and its web app, creates the Firestore database, writes `.env` (git-ignored), deploys hosting + Firestore rules + Remote Config, and verifies what it can (anonymous sign-in probe via `accounts:signUp`, hosting URL fetch). `--dry-run` prints every step without touching anything.
 
-> App Check is required by Firebase AI Logic (auto-enforced since 2026-11-02). The app resolves it at build time: debug provider on localhost, `VITE_RECAPTCHA_SITE_KEY` (recommended for the hosted URL) or `VITE_APPCHECK_DEBUG_TOKEN` (accepted by the hackathon rules) from `.env` — see `.env.example`.
+What the project behind the hosted URL needed beyond that (2026-11-26), and who can do it:
+
+| Piece | How | Who |
+|---|---|---|
+| Hosting, Firestore rules and indexes, Remote Config | `firebase deploy` — the bootstrap's step 5 | the CLI |
+| **AI Logic with the Gemini Developer API provider** | `FIREBASE_CLI_EXPERIMENTS=ailogic firebase ailogic:providers:enable gemini-developer-api --project <projectId>`; the console's *AI Logic → Get started* sets the provider up as well. Until the project's AI Logic configuration exists, every call answers “Firebase AI Logic genai config not found” | the CLI or the console |
+| **App Check** | either a debug token registered for the web app — `firebase appcheck:debugtokens:create <uuid> --app <appId> --display-name <name> --no-save-local`, its value in `.env` as `VITE_APPCHECK_DEBUG_TOKEN` — or a reCAPTCHA site key registered under *App Check → Apps → web app → Register*, as `VITE_RECAPTCHA_SITE_KEY` (real attestation; the better choice for a public URL) | the CLI or the console |
+| **Gemini API free tier** | it may be **unavailable for your Google account**: every call then answers HTTP 403 “The Gemini API free tier is not available for this project”. Verify a device at `https://aistudio.google.com/verify?project=<projectId>` (free), or link billing at `https://aistudio.google.com/billing` | **the account owner only** |
+| **Authentication → Anonymous** | *Firebase console → the project → Authentication → Sign-in method → Anonymous → Enable → Save*. Console only: until the owner has opened Authentication there, the project has no Identity Toolkit configuration, and every API or CLI route to enable it answers `CONFIGURATION_NOT_FOUND` | **the account owner only** |
+
+> App Check is required by Firebase AI Logic (enforced since 2026-11-02). The app resolves its provider at build time: the debug provider on localhost, `VITE_RECAPTCHA_SITE_KEY` (v3, or Enterprise with `VITE_RECAPTCHA_PROVIDER=enterprise`) or `VITE_APPCHECK_DEBUG_TOKEN` from `.env` — see `.env.example`.
+>
+> **A debug token in `.env` is a debug token in the public bundle.** Anyone can read it there and exchange it for App Check tokens of this app, so it attests nothing about who is calling. The hackathon's rules accept debug tokens; Firebase's own documentation advises against shipping them in a production build. The hosted URL uses one. To move it to real attestation: register a reCAPTCHA site key, set `VITE_RECAPTCHA_SITE_KEY`, redeploy, then delete the debug token (`firebase appcheck:debugtokens:delete`).
 
 ## Before you record / before you submit
 
@@ -155,7 +176,10 @@ One command, no browser. It reads `.env`, changes nothing in the project, and pr
 
 Then a two-line verdict names the step that is still missing. Exit 0 only when every check is green, 1 when something is red, 2 without a `.env`. Run it after every console click and every deploy.
 
-**(d) needs a `VITE_APPCHECK_DEBUG_TOKEN` in `.env`:** the script can exchange a debug token but cannot produce reCAPTCHA attestation. If the deployed bundle uses `VITE_RECAPTCHA_SITE_KEY`, it says so and (d) is reported as not probed — check the hosted URL in a browser instead.
+Two things the script does **not** prove:
+
+- **(d) needs a `VITE_APPCHECK_DEBUG_TOKEN` in `.env`:** the script can exchange a debug token but cannot produce reCAPTCHA attestation. If the deployed bundle uses `VITE_RECAPTCHA_SITE_KEY`, it says so and (d) is reported as not probed — check the hosted URL in a browser instead.
+- **An exchanged App Check token is not proof that AI Logic accepts the attestation.** While the Gemini side refuses the call, it refuses it with a valid token, a garbage one and none at all alike. Only a Gemini answer through AI Logic — a green (d) — shows App Check end to end.
 
 Two steps only the account owner can take; no API or CLI command does either:
 
@@ -166,11 +190,10 @@ Two steps only the account owner can take; no API or CLI command does either:
 
 ## Run with Firebase
 
-1. Create a Firebase project; add a Web app; copy the config.
-2. `cp .env.example .env` and paste the config as one line.
-3. Enable **Authentication → Anonymous**, **Firestore**, and the **AI Logic** workflow (Gemini Developer API provider).
-4. Register the App Check **debug token** printed in your console at *App Check → Apps → Manage debug tokens* (or set a reCAPTCHA site key — see above).
-5. `npm run dev` (or `firebase deploy` after `npm run build`).
+1. Wire the project as above. `.env` holds the web app's config as `VITE_FIREBASE_CONFIG`.
+2. `npm run build` bakes that config into `dist/`; `firebase deploy` (or the bootstrap) serves it at `https://<projectId>.web.app`.
+3. `npm run dev` on `localhost` runs **live mode** against the same project. *(The demo-mode e2e suite needs the config blanked once a `.env` exists: `VITE_FIREBASE_CONFIG= npm run dev -- --port 5187 --strictPort`.)*
+4. Before you record or submit: `node scripts/live-readiness.mjs`.
 
 ## Stack
 

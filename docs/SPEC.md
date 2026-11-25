@@ -10,6 +10,8 @@ Built for the **Firebase #BuildHybridAI 2026 hackathon** (Web / Chrome platform)
 > **Amended in the night of 2026-11-25**, after the audit that found the UI and the docs claiming a few things the code did not do: which engine a record is credited to (§5.1, §6.1), simulation labelling (§4.1, §4.2, §4.3, §6.2, §6.3, §6.5), the Remote Config feature switches (§4.2, §5, §7), test counts (§11, §12) and the list of known gaps (§13) were re-checked against the application code at commit `f7f7b22`.
 >
 > **Amended in the day of 2026-11-25**, which fixed the defects that night's §13 listed (commits `4e858b3` to `58bac03`): the cloud model now reaches the request (§5, §7); the first render does not wait for the network (§4.1, §7, §10); every call runs under a budget (§5, §6.1, §9); the severity button on the capture preview works (§4.2); an answer's badge keeps the status chip and a late reply changes nothing (§6.3, §6.4); the simulated report is a report (§6.5). These statements were re-checked against the application code at commit `58bac03`.
+>
+> **Amended in the night of 2026-11-26**, after the project was wired to a real Firebase project and deployed: the deployment's state and the two owner steps it still waits on (§7, §13); what the Projects panel says when the deployment has not enabled anonymous sign-in, and that it is redrawn when the sign-in fails (§4.1, §10); what every badge says when the cloud engine is not available on this project (§5, §6.1); test counts (§11, §12) and the readiness check (§12). These statements were re-checked against the application code at commit `c9aac06`.
 
 ---
 
@@ -42,7 +44,7 @@ Top to bottom:
 
 1. **Top bar** (both views): brand; connectivity chip (`⇅ online` / `✕ offline`); engine chip (§6.3); runtime chip (`local demo` / `emulator` / `firebase live`). Directly under it, on this view and on the inspection session alike, comes the banner of the demo simulation — only while that simulation is on (§6.5).
 2. **Two-column first screen**
-   - *Left:* the hero — "Field inspections in dead zones, still structured." — with one call to action, **Open today's inspection →** (opens the first project, or starts a new one when there is none), and **Projects**: one card per project (name, structure type, record count, "since" date) plus **＋ New** (two browser prompts: name, then structure type `bridge` / `tunnel` / `hydraulic` / `other`). In emulator and live mode the panel needs the anonymous user, who is not waited for (§10): until that user exists it says "Signing in anonymously…", and a failed sign-in is stated there too — it never shows an empty list for a signed-in owner. **＋ New** is refused while there is no user to own the project.
+   - *Left:* the hero — "Field inspections in dead zones, still structured." — with one call to action, **Open today's inspection →** (opens the first project, or starts a new one when there is none), and **Projects**: one card per project (name, structure type, record count, "since" date) plus **＋ New** (two browser prompts: name, then structure type `bridge` / `tunnel` / `hydraulic` / `other`). In emulator and live mode the panel needs the anonymous user, who is not waited for (§10): until that user exists it says "Signing in anonymously…", and a failed sign-in is stated there too — it never shows an empty list for a signed-in owner. What it states depends on the failure (`signin.ts`): a deployment that has not enabled anonymous sign-in is named as that — "This deployment has not enabled anonymous sign-in (CONFIGURATION_NOT_FOUND) — projects and records need it. The project's owner must turn it on: Firebase console → Authentication → Sign-in method → Anonymous → Enable. Reloading the page does not help until then." — while any other failure keeps "Could not sign in (…) … Check the connection and reload the page." **＋ New** is refused while there is no user to own the project, with the matching reason.
    - *Right:* **From field note to structured record** (hint: *works offline*), a three-step walkthrough:
 
      | Step | Title | What is shown |
@@ -103,10 +105,10 @@ In emulator and live mode a record is *born* pending, whatever the connectivity:
 
 | # | Feature | Where | `InferenceMode` | If that engine cannot answer |
 |---|---|---|---|---|
-| F1 | **Note → structured defect record** (JSON) | Capture defect | `PREFER_ON_DEVICE` | the SDK falls back to cloud; if no model answers inside the budget (§9) or the reply is not usable JSON, the rule-based extractor produces the record, which is saved and badged as rule-based (§5.1) |
-| F2 | **Field Q&A**, single-turn | Ask SiteScribe | `PREFER_ON_DEVICE` | an honest text instead of an answer: "No engine reachable (offline, no device model)" when the call failed, "No engine answered in time" when it ran out of its budget (§9); capture keeps working |
-| F3 | **Report drafting** from the day's records | Draft report | `ONLY_IN_CLOUD` | offline no call is made; the badge says "Report drafting needs a connection (cloud task)". A call that runs out of its budget ends in "Report drafting timed out — the cloud engine did not answer in time", shown with the badge alone; any other failure is reported as "Report drafting failed: …" |
-| F4 | **Severity cross-check** against a short indicative reference card (crack-width bands, exposed reinforcement, seepage/efflorescence) | Check severity vs reference | `PREFER_ON_DEVICE` | a rule-based cross-check against the same card — whether the call failed or ran out of its budget |
+| F1 | **Note → structured defect record** (JSON) | Capture defect | `PREFER_ON_DEVICE` | the SDK falls back to cloud; if no model answers inside the budget (§9) or the reply is not usable JSON, the rule-based extractor produces the record, which is saved and badged as rule-based (§5.1). When the cloud engine is not available on this project, the badge says so (§6.1) |
+| F2 | **Field Q&A**, single-turn | Ask SiteScribe | `PREFER_ON_DEVICE` | an honest text instead of an answer: "No engine reachable (offline, no device model)" when the call failed, "No engine answered in time" when it ran out of its budget (§9), "No engine reachable (the cloud engine is not available on this project)" when the cloud refused for that reason; capture keeps working |
+| F3 | **Report drafting** from the day's records | Draft report | `ONLY_IN_CLOUD` | offline no call is made; the badge says "Report drafting needs a connection (cloud task)". A call that runs out of its budget ends in "Report drafting timed out — the cloud engine did not answer in time", shown with the badge alone; a cloud engine that is not available on this project ends the same way in "Report drafting unavailable — the cloud engine is not available on this project"; any other failure is reported as "Report drafting failed: …" |
+| F4 | **Severity cross-check** against a short indicative reference card (crack-width bands, exposed reinforcement, seepage/efflorescence) | Check severity vs reference | `PREFER_ON_DEVICE` | a rule-based cross-check against the same card — whether the call failed or ran out of its budget; its badge names the cause when the cloud engine is not available on this project |
 
 The SDK offers four modes (`PREFER_ON_DEVICE`, `ONLY_ON_DEVICE`, `ONLY_IN_CLOUD`, `PREFER_IN_CLOUD`); the app uses the two in the table. The cloud model named in Remote Config is passed to the SDK as `inCloudParams.model` of every request (`hybridModelParams()` in `src/engine.ts`) — the place SDK 13.4.0 reads it under a hybrid `mode`. Until 2026-11-25 it was passed as a top-level `model`, which the SDK ignores there, so every request went to the SDK's own default. F3 receives the records as a plain numbered list and is asked for clean Markdown. F3 and F4 can be switched off by Remote Config (§7); F1 and F2 cannot. Every call runs under a budget (§9) and emits exactly one engine event — for the answer the user gets.
 
@@ -144,10 +146,10 @@ It is never presented as AI output: the record chip says `⚙ rule-based`.
 | **On-device** | green · `⚡ On-device · Gemini Nano` | `GenerateContentResponse.inferenceSource === "on_device"` | F1 and F2 with the model installed (asserted with the network cut); F4 uses the same mode |
 | **Cloud** | blue · `☁ Cloud · Gemini` | `inferenceSource === "in_cloud"` on a request that did **not** ask for on-device (F3) | report drafting † |
 | **Fell back to cloud** | amber · `☁ Fell back to cloud · Gemini` (the legend chip reads `↘ Fell back to cloud`) | `inferenceSource === "in_cloud"` on a request that **did** ask for on-device (F1, F2, F4) | on-device was preferred but could not serve the request † |
-| **Rule-based fallback** | grey (neutral) · `⚙ Rule-based fallback (no AI engine reachable)` | no usable model reply: the call threw, or outlived its budget | no model and no reachable cloud; a call that ran out of its budget on a hung network (e2e-23) |
+| **Rule-based fallback** | grey (neutral) · `⚙ Rule-based fallback (no AI engine reachable)` | no usable model reply: the call threw, or outlived its budget | no model and no reachable cloud; a call that ran out of its budget on a hung network (e2e-23). When the cloud engine is not available on this project, the same grey badge names that cause instead (§6.1.1, e2e-24) |
 | **Rule-based, reply unusable** | grey (neutral) · `⚙ Rule-based (… replied, but not with usable JSON)` | a model answered, but with text that could not be used; the fields are the rules' (§5.1) | edge case, driven by `e2e-full` with a canned reply |
 
-† Never observed for real — there is no Firebase project yet (§13). Only the labelled demo simulation (§6.5) has shown these two chips.
+† Never observed for real (§13): the real project answers every cloud call so far with the free-tier refusal. Only the labelled demo simulation (§6.5) has shown these two chips.
 
 The engine is never inferred from the requested mode; it is read from the response. "Cloud" and "Fell back to cloud" differ in exactly one fact: whether that request preferred on-device. When the SDK answers without `inferenceSource` (the field is optional), the chip says `⏳ Engine unknown` rather than guessing, and the record is stored with `extractedBy: "unknown"` and shows `⏳ engine unknown` on its card — the model did produce the fields (`badgeFromSource()` and `recordEngine()` in `src/engine.ts`). The installed SDK (13.4.0) always sets the field, so this path is driven by `e2e-full` with the property hidden where the app reads it (e2e-17).
 
@@ -163,8 +165,22 @@ Other labels shown in the same chips:
 | `⚙ No engine answered in time` | F2 when its call ran out of its budget (§9) |
 | `⚙ Report drafting needs a connection (cloud task)` | F3 while offline |
 | `⚙ Report drafting timed out — the cloud engine did not answer in time` | F3 when its call ran out of its budget (§9) |
+| `⚙ Report drafting unavailable — the cloud engine is not available on this project` | F3 when the cloud refused because the project cannot use the Gemini API (§6.1.1) |
 
 "Ready" is never the app's own word: it is emitted only when Chrome reports `available` and the preload inference succeeds. Red is reserved for real failures and the offline indicator; the rule-based fallback is neutral grey on purpose.
+
+#### 6.1.1 A cloud engine the project cannot use
+
+Firebase AI Logic answers HTTP 403 with "The Gemini API free tier is not available for this project" when the Google account cannot use the free tier — the account's standing with Google, which neither a retry nor another connection changes (first seen on the real project on 2026-11-26; §13). The AI Logic SDK passes that sentence on in its error, `cloudNotAvailableOnProject()` in `src/engine.ts` reads it, and each feature names the cause instead of the "no engine reachable" wording that would send the reader after a connection that is fine:
+
+| Feature | Badge | Elsewhere |
+|---|---|---|
+| F1 | `⚙ Rule-based fallback (the cloud engine is not available on this project)` | the status chip `Rule-based (cloud not available on this project)`; the record is rule-based, as for any failed call |
+| F2 | `⚙ No engine reachable (the cloud engine is not available on this project)` | "No engine answered: there is no on-device model on this device, and the cloud engine is not available on this project. Defect capture still works: …" |
+| F3 | `⚙ Report drafting unavailable — the cloud engine is not available on this project` | the badge alone — no report, no report buttons — as after a timed-out call |
+| F4 | `⚙ Rule-based fallback (the cloud engine is not available on this project)` | the rule-based cross-check, ending "(Rule-based check — no AI engine answered.)" |
+
+Nothing is faked here: no cloud badge appears, and every engine-log row of such a call carries the same words. Any other refusal — another 403 included — keeps its usual wording. `e2e-full` drives it with the real project's answer, byte for byte (e2e-24); against the code before 2026-11-26 those three assertions fail.
 
 ### 6.2 Where badges appear
 
@@ -216,13 +232,13 @@ A banner ("Simulation is on…") sits directly under the top bar on **both** vie
 
 | Product | Role in the shipped code | Status |
 |---|---|---|
-| **Firebase AI Logic** | `getGenerativeModel(ai, { mode, inCloudParams: { model: <cloud model> } })` for each call; `initializeDeviceModel(progress)`; `response.inferenceSource` drives the badge | on-device path proven with the network cut (last on 2026-11-25, after the capture path was restructured); cloud path never called against a real project |
-| **Cloud model** | `gemini-3.8-flash` by default — `DEFAULT_CLOUD_MODEL` in `src/flags.ts`, used by `src/ai.ts` and `src/firebase.ts`; the same value in `remoteconfig.template.json`. Passed as `inCloudParams.model`, where SDK 13.4.0 reads it under a hybrid `mode` | asserted where it matters: the AI Logic request that the capture sends names `gemini-3.8-flash`, and the SDK no longer warns that the model is ignored (`e2e-emulator`). Until 2026-11-25 every request went to the SDK's own default, `gemini-3.5-flash-lite`. Never reached by a real project |
-| **App Check** | live mode only. localhost or no site key → debug provider (token printed to the console, or `VITE_APPCHECK_DEBUG_TOKEN`). A site key (`VITE_RECAPTCHA_SITE_KEY`) → reCAPTCHA attestation, v3 by default, Enterprise with `VITE_RECAPTCHA_PROVIDER=enterprise`. Auto-refresh on | code only; production attestation never verified (§13) |
-| **Authentication** | anonymous sign-in only; an offline cold start with a restored session skips the sign-in round trip. The sign-in is never awaited for the first render: the owner's data follows once the user exists (`authReady`) | proven against the Auth emulator |
-| **Firestore** | `persistentLocalCache()` (IndexedDB); collections `projects` and `records`, both stamped with `owner`; rules allow owner-only read / update / delete and create only for one's own uid; listings read the local cache, never the server | proven against the Firestore emulator |
-| **Remote Config** | three keys with baked-in defaults: `cloud_model`, `feature_report_drafting`, `feature_severity_check`; fetch at most every 10 minutes. The fetch is never awaited for the first render: the app starts on the defaults, counts the fetch as settled after 5 s whatever the network does (`REMOTE_CONFIG_TIMEOUT_MS`), and applies values that arrive later — the cloud model from the next call on, the feature switches in place. The two feature keys are kill-switches (`featureGate()` in `src/flags.ts`): when one is `false` its feature is not offered — the control is disabled and one line under *Records* says why (`Report drafting is switched off by Remote Config — no request is sent.`; the key is in the disabled control's tooltip) — and no request is sent. Defaults stay `true` | only the fallback to defaults was ever exercised: settled as `failed` after 1–2 s on this network, and as `timed-out` after 5.1 s with every request held (`e2e-emulator`). The switched-off state was exercised through the demo-only URL flags, not through Remote Config |
-| **Hosting** | `firebase.json`: `dist/`, single-page rewrite, cache headers, `sw.js` served `no-cache` | never deployed |
+| **Firebase AI Logic** | `getGenerativeModel(ai, { mode, inCloudParams: { model: <cloud model> } })` for each call; `initializeDeviceModel(progress)`; `response.inferenceSource` drives the badge | on-device path proven with the network cut (last on 2026-11-25, after the capture path was restructured). Against the real project (2026-11-26) the cloud request reaches Gemini and is refused — HTTP 403, the free tier is unavailable for the builder's account — so no cloud answer has ever been seen; the refusal is what §6.1.1 describes (§13) |
+| **Cloud model** | `gemini-3.8-flash` by default — `DEFAULT_CLOUD_MODEL` in `src/flags.ts`, used by `src/ai.ts` and `src/firebase.ts`; the same value in `remoteconfig.template.json`. Passed as `inCloudParams.model`, where SDK 13.4.0 reads it under a hybrid `mode` | asserted where it matters: the AI Logic request that the capture sends names `gemini-3.8-flash`, and the SDK no longer warns that the model is ignored (`e2e-emulator`). Until 2026-11-25 every request went to the SDK's own default, `gemini-3.5-flash-lite`. Named in the request the real project refused on 2026-11-26; no model has answered it yet |
+| **App Check** | live mode only. localhost or no site key → debug provider (token printed to the console, or `VITE_APPCHECK_DEBUG_TOKEN`). A site key (`VITE_RECAPTCHA_SITE_KEY`) → reCAPTCHA attestation, v3 by default, Enterprise with `VITE_RECAPTCHA_PROVIDER=enterprise`. Auto-refresh on. **The hosted URL uses a registered debug token, and `VITE_APPCHECK_DEBUG_TOKEN` is baked into the public bundle** — anyone can exchange it, so it attests nothing about who is calling (§13) | the debug token exchanges for an App Check token (verified against the real project, 2026-11-26). That AI Logic accepts the attestation is **not** verified: while Gemini refuses the call, it refuses it with any token and with none. reCAPTCHA attestation was never exercised |
+| **Authentication** | anonymous sign-in only; an offline cold start with a restored session skips the sign-in round trip. The sign-in is never awaited for the first render: the owner's data follows once the user exists (`authReady`), and its failure is stated in the Projects panel by its meaning (`signin.ts`, §4.1) | proven against the Auth emulator. Against the real project (2026-11-26) the sign-in fails with `auth/configuration-not-found`: anonymous sign-in is not enabled there — a step only the project's owner can take, in the console (§13) |
+| **Firestore** | `persistentLocalCache()` (IndexedDB); collections `projects` and `records`, both stamped with `owner`; rules allow owner-only read / update / delete and create only for one's own uid; listings read the local cache, never the server | proven against the Firestore emulator. The real project has a database, and the rules and indexes were deployed on 2026-11-26; no write has reached it yet — there has been no signed-in user |
+| **Remote Config** | three keys with baked-in defaults: `cloud_model`, `feature_report_drafting`, `feature_severity_check`; fetch at most every 10 minutes. The fetch is never awaited for the first render: the app starts on the defaults, counts the fetch as settled after 5 s whatever the network does (`REMOTE_CONFIG_TIMEOUT_MS`), and applies values that arrive later — the cloud model from the next call on, the feature switches in place. The two feature keys are kill-switches (`featureGate()` in `src/flags.ts`): when one is `false` its feature is not offered — the control is disabled and one line under *Records* says why (`Report drafting is switched off by Remote Config — no request is sent.`; the key is in the disabled control's tooltip) — and no request is sent. Defaults stay `true` | until 2026-11-26 only the fallback to defaults was ever exercised: settled as `failed` after 1–2 s on this network, and as `timed-out` after 5.1 s with every request held (`e2e-emulator`). The switched-off state was exercised through the demo-only URL flags, not through Remote Config. Against the real project the fetch succeeded on 2026-11-26: settled as `no-change` after 1.9 s, with the defaults |
+| **Hosting** | `firebase.json`: `dist/`, single-page rewrite, cache headers, `sw.js` served `no-cache` | deployed on 2026-11-26 (hosting, Firestore rules and indexes, Remote Config template): `https://sitescribe-5998a.web.app/` answers HTTP 200 and serves the build of commit `eb1cda5`; the commits after it are not deployed yet. Whether the cache headers reach the browser was not checked |
 
 ### 7.1 Running modes
 
@@ -288,7 +304,7 @@ When a budget runs out (`withinBudget()` in `src/engine.ts`, unit-tested): F1 an
 | Connectivity changes | only the connectivity chip is updated; the view is not re-rendered, so a half-typed note survives | same |
 
 - **Persistence.** Demo mode keeps everything in `localStorage`. Emulator and live mode use Firestore's offline persistence: writes made offline resolve locally and are sent when connectivity returns.
-- **First render (emulator or live mode).** Nothing that needs the network is awaited: neither the anonymous sign-in nor the Remote Config fetch. The home view renders at once on the baked-in defaults; the Projects panel says "Signing in anonymously…" until the anonymous user exists, and states a failed sign-in; the owner's projects and the demo seeds follow when the user is there. Remote Config counts as settled after 5 s whatever the network does, and values that arrive later are applied then (§7). Measured with every Firebase / Google request held — neither answered nor failed — on 2026-11-25: first render after 84 ms, Remote Config settled as `timed-out` after 5.1 s, and the seeded project appeared as soon as the sign-in was let through (`e2e-emulator`). Until that day both round trips were awaited, and where Google's endpoints hang the page stayed blank for 85 s.
+- **First render (emulator or live mode).** Nothing that needs the network is awaited: neither the anonymous sign-in nor the Remote Config fetch. The home view renders at once on the baked-in defaults; the Projects panel says "Signing in anonymously…" until the anonymous user exists, and states a failed sign-in — since 2026-11-26 it is also redrawn when the sign-in fails (until then it kept "Signing in anonymously…" for good), and it names a deployment that has not enabled anonymous sign-in as that (§4.1); the owner's projects and the demo seeds follow when the user is there. Remote Config counts as settled after 5 s whatever the network does, and values that arrive later are applied then (§7). Measured with every Firebase / Google request held — neither answered nor failed — on 2026-11-25: first render after 84 ms, Remote Config settled as `timed-out` after 5.1 s, and the seeded project appeared as soon as the sign-in was let through (`e2e-emulator`). Until that day both round trips were awaited, and where Google's endpoints hang the page stayed blank for 85 s.
 - **Cold start offline (emulator or live mode).** With a restored anonymous session the app skips the sign-in round trip and renders from local persistence.
 - **App shell.** A production build registers a service worker generated at build time: it precaches the shell, serves navigations network-first with the cached shell as fallback and same-origin assets cache-first, and never touches cross-origin (Firebase / Gemini) traffic.
 - **Remote Config.** A failed fetch leaves the baked-in defaults in place.
@@ -304,7 +320,7 @@ When a budget runs out (`withinBudget()` in `src/engine.ts`, unit-tested): F1 an
 
 ### 11.2 Acceptance criteria
 
-"Last recorded result" is the verification run of 2026-11-25 on the application code at commit `58bac03`, as recorded in the README "Verified state" and the progress report; the emulator and on-device rows say how they were run. "code reading" means the criterion is visible in the source but asserted by no script.
+"Last recorded result" is the verification run of 2026-11-26 on the application code at commit `c9aac06`, as recorded in the README "Verified state" and the progress report; rows last exercised on 2026-11-25 (on application code at `58bac03`) say so, and the emulator and on-device rows say how they were run. "code reading" means the criterion is visible in the source but asserted by no script.
 
 | # | Criterion | Checked by | Last recorded result |
 |---|---|---|---|
@@ -312,22 +328,25 @@ When a budget runs out (`withinBudget()` in `src/engine.ts`, unit-tested): F1 an
 | A2 | Diagnostics are collapsed by default; the engine log renders only with events | code reading | — |
 | A3 | The home-screen example card is the rule-based extractor's real output | code reading | — |
 | A4 | Typed capture only; no speech API anywhere in `src/` | code reading | — |
-| A5 | The rule-based extractor takes the defect mentioned first; a tie keeps the more specific one | `npm test` | 105 / 105 unit tests |
+| A5 | The rule-based extractor takes the defect mentioned first; a tie keeps the more specific one | `npm test` | 135 / 135 unit tests |
 | A6 | Record times are local with an explicit zone | `npm test` (7 format tests), `e2e-full` | pass |
-| A7 | A connectivity change keeps a half-typed note | `e2e-full` | 38 / 38 |
-| A8 | Demo mode: seeds are synced, an online capture is synced at once, an offline capture is pending, *Back in range* flips it | `e2e-full` | 38 / 38 |
+| A7 | A connectivity change keeps a half-typed note | `e2e-full` | 41 / 41 |
+| A8 | Demo mode: seeds are synced, an online capture is synced at once, an offline capture is pending, *Back in range* flips it | `e2e-full` | 41 / 41 |
 | A9 | Demo and emulator mode fake no engine: badges read rule-based / no engine / needs a connection | `e2e-full`, `e2e-emulator` | pass |
 | A10 | Real SDK chain: anonymous sign-in, an offline write is absent from the server and arrives after reconnect, the chip flips, rules reject cross-user access | `e2e-emulator` | 27 / 27 (2026-11-25, Firestore emulator port moved — §12) |
 | A11 | The app renders after an offline hard reload and the records survive it | `e2e-emulator` | 27 / 27 |
 | A12 | With the model installed and the network cut, the F1 and F2 badges come from `inferenceSource === "on_device"` | `e2e-ondevice` | 2 / 2 — four runs on 2026-11-25 (15:03, 19:18, 19:44, 19:49); the last three on the final capture path, the last with a clean tree |
 | A13 | Every checked text / background pair is at least 4.5 : 1 | `ui-screens.mjs` | 160 / 160, minimum 5.7 : 1 |
 | A14 | The first capture does not wait for the model download | manual probe, 2026-11-24 | observed; no automated assertion |
-| A15 | Real cloud badge, real fell-back badge, hosted URL, production App Check | — | **never observed** (§13) |
+| A15 | Real cloud badge, real fell-back badge, production App Check | — | **never observed** (§13): the real project answers every cloud call with the free-tier refusal; the App Check debug token exchanges, but nothing shows yet that AI Logic accepts the attestation |
+| A26 | A deployment that has not enabled anonymous sign-in is named as that in the Projects panel and in the ＋ New refusal; any other failed sign-in keeps the old advice; the panel is redrawn when the sign-in fails | `npm test` (7 sign-in tests); no e2e suite reaches it | pass — unit. Seen once against the real project on 2026-11-26: the panel read "This deployment has not enabled anonymous sign-in (CONFIGURATION_NOT_FOUND) …" |
+| A27 | When the cloud engine is not available on this project, F1–F4 each name the cause; the record stays rule-based; the report is no report; no cloud badge appears | `npm test` (5 tests), `e2e-full` (e2e-24, the real project's HTTP 403 canned in) | pass — against the code of 2026-11-25 the three e2e assertions fail |
+| A28 | One command says whether the hosted app is ready, and prints no key or token | `npm test` (18 readiness tests); `scripts/live-readiness.mjs` against the real project | pass — on 2026-11-26: 3 / 5 green, exit 1, the verdict names the two owner steps |
 | A16 | A record is credited to the engine that produced its fields: an unusable reply gives a rule-based record, a reply without `inferenceSource` gives `Engine unknown` / `unknown` | `npm test` (11 engine tests, 17 budget tests), `e2e-full` (e2e-16/17, canned replies) | pass |
 | A17 | With the demo simulation on, every answer badge, legend chip, status chip, record card and log row says "(simulated)" and the banner is on both views; a real run shows none of it | `e2e-full` (e2e-18…21), `e2e-emulator` | pass |
 | A18 | A feature switch set to `false` disables its control with a one-line explanation, and no request is sent | `npm test` (7 switch tests), `e2e-full` (e2e-22, demo URL flags) | pass |
 | A19 | The configured cloud model reaches the request | `e2e-emulator` (the AI Logic request the capture sends) | pass — it names `gemini-3.8-flash`; the SDK no longer warns that the model is ignored |
-| A20 | The first render does not wait for the network | `e2e-emulator` | pass — project card 347 ms after navigation; with every Firebase / Google request held: first render 84 ms, Remote Config settled as `timed-out` after 5.1 s, owner's data after the sign-in was let through |
+| A20 | The first render does not wait for the network | `e2e-emulator` | pass — project card 347 ms after navigation; with every Firebase / Google request held: first render 84 ms, Remote Config settled as `timed-out` after 5.1 s, owner's data after the sign-in was let through. Seen again on 2026-11-26 on a local live-mode build against the real project: the page rendered while the sign-in failed |
 | A21 | On a hung network F1–F4 each fall back within their budget to their own honest state | `npm test` (17 budget tests), `e2e-full` (e2e-23) | pass — F1 after 12.4 s, F4 + F2 + F3 together after 12.3 s (last run; 12.2–12.5 s across the day's runs) |
 | A22 | The severity button on the capture preview answers like the ones in *Records* | `e2e-full` | pass |
 | A23 | An answer's badge keeps the status chip when the warm-up's closing line follows | `npm test`, `e2e-full` | pass — the system row is in the log, the chip still shows the answer |
@@ -338,10 +357,11 @@ When a budget runs out (`withinBudget()` in `src/engine.ts`, unit-tested): F1 an
 
 ```bash
 npm run check                                   # TypeScript, strict — 0 errors
-npm test                                        # unit tests (node --test): extractor, engine attribution, call budgets and late replies, simulation texts, feature switches, pending queue / merge, local-time formatting, base-URL guard, bootstrap env writer, video maths — no browser
-npm run dev -- --port 5187 --strictPort         # dev server for the e2e scripts (5173 may be taken by another project)
+npm test                                        # unit tests (node --test): extractor, engine attribution, call budgets and late replies, what a cloud refusal and a refused sign-in mean, simulation texts, feature switches, pending queue / merge, local-time formatting, base-URL guard, bootstrap env writer, video maths, the readiness checks' decisions — no browser
+VITE_FIREBASE_CONFIG= npm run dev -- --port 5187 --strictPort   # dev server in DEMO mode for the e2e scripts (5173 may be taken by another project; once a .env exists, its Firebase config must be blanked this way or the dev server comes up in live mode)
 
-node scripts/e2e-full.mjs --port 5187           # demo mode on a FRESH profile: 38 assertions — the loop, two F1 edge cases with canned replies, simulation labelling, the feature switches, a hung network
+node scripts/e2e-full.mjs --port 5187           # demo mode on a FRESH profile: 41 assertions — the loop, two F1 edge cases with canned replies, simulation labelling, the feature switches, a hung network, a cloud engine the project cannot use
+node scripts/live-readiness.mjs                   # the REAL project, no browser: CLI login, hosting URL and build, anonymous sign-in, Gemini through AI Logic; exit 0 only when all are green
 node scripts/e2e-emulator.mjs                   # real SDK vs the local Emulator Suite: builds, boots and stops it itself (needs JAVA_HOME): 27 assertions
 node scripts/e2e-ondevice.mjs --url http://127.0.0.1:5187   # real Gemini Nano only; exit 2 = honest skip when the model is absent
 node scripts/ui-screens.mjs --port 5187         # screenshots + contrast / first-screen audit
@@ -357,33 +377,50 @@ node scripts/firebase-bootstrap.mjs --dry-run   # prints the project-bootstrap s
 
 ## 13. Known gaps — verified vs. never observed
 
-**Verified in a running build** (2026-11-25 on the application code at commit `58bac03`; see README "Verified state"):
+**Verified in a running build** — the rows without a date on 2026-11-25, on the application code at commit `58bac03`; the rows dated 2026-11-26 on the application code at commit `c9aac06` (see README "Verified state"):
 
-- The demo-mode loop and every fix of that day and night: rule-based fallback, pending → synced, honest F2 / F3 behaviour offline, local-time stamps, both F1 edge cases, simulation labelling, the feature switches, the preview's severity button, the status chip against the warm-up line, a late reply, the simulated report — `e2e-full` 38 / 38.
+- The demo-mode loop and every fix of 2026-11-25: rule-based fallback, pending → synced, honest F2 / F3 behaviour offline, local-time stamps, both F1 edge cases, simulation labelling, the feature switches, the preview's severity button, the status chip against the warm-up line, a late reply, the simulated report — `e2e-full` 38 / 38 that day, 41 / 41 with the 2026-11-26 row below.
 - A hung network: every AI Logic request paused and never answered; F1 fell back after 12.4 s, F4 + F2 + F3 together after 12.3 s, each to its own honest state (`e2e-full`, e2e-23).
 - The real Firebase SDK chain against the local Emulator Suite: anonymous auth, offline write queue, owner-only rules, PWA shell after an offline reload, that the demo-only URL switches have no effect there, that the AI Logic request names `gemini-3.8-flash`, and the first render with every Firebase / Google request held — `e2e-emulator` 27 / 27, on a copy with the Firestore emulator port moved (§12).
 - Contrast of every probed text / background pair — `ui-screens.mjs` 160 / 160 at 4.5 : 1 or above.
 - On-device inference with the network cut, on real Gemini Nano — `e2e-ondevice` 2 / 2, four times on 2026-11-25 (15:03, 19:18, 19:44, 19:49); the last three on the final capture path, the last with a clean tree.
+- **2026-11-26, demo mode — a cloud engine the project cannot use.** The AI Logic request is answered with the bytes the real project sent (HTTP 403): every badge, the status chip and every engine-log row name the cause, the capture stays a rule-based record, the report is no report, and no cloud badge appears (`e2e-full`, e2e-24). Against the application code of the day before, the same three assertions fail.
+- **2026-11-26, the real project, from Node** (`scripts/live-readiness.mjs`, three runs): the CLI is logged in; `https://sitescribe-5998a.web.app/` answers HTTP 200 and serves the build in `dist/`; `accounts:signUp` answers `CONFIGURATION_NOT_FOUND`, so anonymous sign-in is not enabled; the registered App Check debug token exchanges for an App Check token (about 0.5–0.6 s); the AI Logic request for `gemini-3.8-flash` is answered with HTTP 403 "The Gemini API free tier is not available for this project".
+- **2026-11-26, the real project, in a browser** (a local live-mode build, headless Chrome, a fresh profile): the page rendered at once; the Remote Config fetch settled as `no-change` after 1.9 s, with the defaults; the sign-in failed with `auth/configuration-not-found`; the Projects panel read "This deployment has not enabled anonymous sign-in (CONFIGURATION_NOT_FOUND) — projects and records need it. …" and ＋ New was refused with the same reason.
 
-**Never observed** — all of it blocked on the same thing: no Firebase project exists yet (no `.env`, no login, never deployed):
+**The hosted deployment as of 2026-11-26** — how it is wired, and what that implies:
 
-- Real cloud inference. `Cloud · Gemini` and `Fell back to cloud · Gemini` have only ever been seen as the labelled demo simulation.
-- Production App Check attestation (reCAPTCHA or a registered debug token) end to end. Only the code path and the bootstrap script's `--dry-run` exist.
-- The hosted URL, and a real Remote Config fetch (only the fallback to defaults was exercised). The switched-off state of the feature switches was exercised through the demo-only URL flags, not through Remote Config.
-- That the first capture on a browser without the model is answered by the cloud once a project is wired up. Expected by design; in demo mode the rule-based fallback answers instead.
+- **Hosting, Firestore rules and indexes, and the Remote Config template** were deployed with `firebase deploy` (`scripts/firebase-bootstrap.mjs`, `--existing-project`, then `--deploy-only`) at 02:15. The hosted URL serves the build of commit `eb1cda5`; **the commits after it — the honest states of §4.1 and §6.1.1 — are not on the hosted URL until the next deploy.**
+- **AI Logic uses the Gemini Developer API provider**, enabled through the CLI: `FIREBASE_CLI_EXPERIMENTS=ailogic firebase ailogic:providers:enable gemini-developer-api --project sitescribe-5998a`. The console's *AI Logic → Get started* does the same job. The project's AI Logic configuration had to exist before any call got past "Firebase AI Logic genai config not found".
+- **App Check is a registered debug token, and it ships in the public bundle.** `VITE_APPCHECK_DEBUG_TOKEN` is read from `.env` at build time, so the token is in the JavaScript anyone can download, and anyone can exchange it for App Check tokens of this app. It shows that the provider is wired; it attests nothing about who is calling. The hackathon's rules accept debug tokens; Firebase's own documentation advises against a debug token in a production build. The alternative in the code — a reCAPTCHA site key as `VITE_RECAPTCHA_SITE_KEY` — has never been exercised.
+- **Authentication is the one console-only step.** Anonymous sign-in can be switched on only by the project's owner, in the console: *Authentication → Sign-in method → Anonymous → Enable*. Until the owner has opened Authentication there, the project has no Identity Toolkit configuration and every API or CLI route to enable it answers `CONFIGURATION_NOT_FOUND`. Until then the hosted app lists no projects, and nothing can be recorded on the hosted URL.
+- **The Gemini API free tier may be unavailable for a Google account — and is for the builder's.** Every call is refused with the HTTP 403 above; a second, throw-away project under the same account was refused identically. The remedy is the owner's: verify a device at `https://aistudio.google.com/verify?project=sitescribe-5998a` (free), or link billing at `https://aistudio.google.com/billing`.
+- **`node scripts/live-readiness.mjs`** reports all of the above in one command — no browser, no key or token in its output — and exits 0 only when everything is green.
 
-**Known limitations, left as they are** (2026-11-25):
+**Never observed:**
+
+- **A cloud answer.** `Cloud · Gemini` and `Fell back to cloud · Gemini` have only ever been seen as the labelled demo simulation. With the free tier unavailable, no real cloud call has got past the refusal.
+- **That AI Logic accepts the app's App Check attestation.** The debug token exchanges, but while Gemini refuses the call, it refuses it alike with a valid App Check token, with a garbage one and with none at all (raw calls, 2026-11-26). Nothing distinguishes an accepted attestation from a missing one until Gemini answers.
+- **The hosted app in use.** The URL serves the app, but without anonymous sign-in it lists no projects: no record has been written to the real Firestore database, and no sync has been seen against it.
+- **Remote Config values that differ from the defaults.** The real fetch returned the defaults (`no-change`); the switched-off state of the feature switches was exercised through the demo-only URL flags, not through Remote Config.
+- **That the first capture on a browser without the model is answered by the cloud.** Expected by design; in demo mode the rule-based fallback answers instead, and on the real project the cloud call is refused.
+
+**Known limitations, left as they are** (2026-11-26):
 
 - **Live mode without an on-device model on a network that hangs:** each call waits its full budget — 45 s, the budget F1 always had in live mode — before it falls back (§9). In demo and emulator mode that budget is 12 s.
-- **F1 and F4 do not say "timed out".** A call that ran out of its budget and a call that failed get the same badge, "Rule-based fallback (no AI engine reachable)"; only F2 and F3 have a badge of their own for a timed-out call. Likewise F2's failure badge says "offline, no device model" for any failure, including a rejected request.
+- **F1 and F4 do not say "timed out".** A call that ran out of its budget and a call that failed get the same badge, "Rule-based fallback (no AI engine reachable)"; only F2 and F3 have a badge of their own for a timed-out call. Likewise F2's failure badge says "offline, no device model" for any failure other than the cloud refusal of §6.1.1, a rejected request included.
 - **Live mode, first launch with Google unreachable:** the page renders at once (since 2026-11-25), but projects and records need the anonymous user. Until the sign-in gets through, the Projects panel says "Signing in anonymously…" and ＋ New is refused.
+- **Before the first cloud call of a session, the legend and the status chip still expect a cloud engine that answers** — "Not installed on this device — the cloud engine answers instead." and `☁ Cloud engine · on-device optional`. The app cannot know otherwise until a call fails; from the first answer on, every badge and log row names the cause (§6.1.1).
+- **The sign-in failure path is in no e2e suite.** It is unit-tested (`tests/signin.test.ts`) and was seen once against the real project. It disappears as soon as anonymous sign-in is enabled, and the Auth emulator answers every project, so `e2e-emulator` cannot produce it.
+- **`scripts/live-readiness.mjs` cannot produce reCAPTCHA attestation:** with `VITE_RECAPTCHA_SITE_KEY` set and no debug token it reports (d) as not probed. Its comparison of the hosted page with `dist/index.html` means something only when `dist/` is freshly built.
 - Records made under the demo simulation before commit `7c2731f` carry no stored flag: in a demo profile that still holds them they read `☁ cloud` without "(simulated)". Demo mode never writes to Firestore.
 - An unhandled promise rejection inside the Remote Config SDK (`Promise.all([getId(), getToken()])` of Firebase Installations) is reported in the console on an offline reload when the first, online Installations registration had failed. It is inside the SDKs, appeared before 2026-11-25 as well, and does not reach the UI.
 - The README's browser prerequisite ("Chrome 139+, enable `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input`") was written on an earlier night and has not been re-checked.
 
 **Read in the code only** — edge cases no test reaches:
 
-- Remote Config values that differ from the defaults, arriving after the first render: the cloud model switch (`setCloudModel()`) and the in-place update of the feature controls (`applyFeatureGates()`) are not exercised by any test — every fetch so far failed or was held.
+- Remote Config values that differ from the defaults, arriving after the first render: the cloud model switch (`setCloudModel()`) and the in-place update of the feature controls (`applyFeatureGates()`) are not exercised by any test — every fetch so far failed, was held, or returned the defaults.
+- The readiness check's `GENAI_CONFIG_NOT_FOUND`, `APP_CHECK` and `NETWORK` outcomes are covered by unit tests with constructed answers only: on 2026-11-26 the real project produced `FREE_TIER_UNAVAILABLE` alone.
 
 ## 14. Repository layout
 
@@ -395,6 +432,7 @@ sitescribe/
 │   ├── ai.ts                   ← AI Logic wrapper: routing, budgets, engine log, demo simulation
 │   ├── extract.ts              ← rule-based extractor and JSON repair (pure)
 │   ├── engine.ts               ← pure decisions: engine attribution, the status-chip rule, call budgets and late replies, the honest fallback answers
+│   ├── signin.ts               ← what a failed anonymous sign-in means for the UI: the deployment's, or the network's (pure)
 │   ├── sim.ts                  ← the demo simulation's texts: what each simulated call answers (pure)
 │   ├── flags.ts                ← Remote Config feature switches and default cloud model: the gate decision and the demo URL override (pure)
 │   ├── firebase.ts             ← demo / emulator / live bootstrap (first render never waits for the network), Remote Config, App Check
@@ -404,7 +442,7 @@ sitescribe/
 │   ├── types.ts
 │   └── styles.css
 ├── tests/                      ← unit tests (node --test)
-├── scripts/                    ← e2e, screenshot, video and bootstrap scripts, on-device probes
+├── scripts/                    ← e2e, screenshot, video and bootstrap scripts, the live-readiness check, on-device probes
 ├── docs/SPEC.md                ← this file
 ├── docs/screenshots/
 ├── firestore.rules · firestore.indexes.json · remoteconfig.template.json · firebase.json
