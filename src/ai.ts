@@ -6,7 +6,8 @@
  * built from `GenerateContentResponse.inferenceSource`.
  */
 import type { AiAnswer, EngineBadgeInfo } from "./types";
-import { ruleBasedStructure, type DefectJson } from "./extract";
+import { type DefectJson } from "./extract";
+import { NOTE_MARK, RECORDS_MARK, simulatedText } from "./sim";
 import {
   SYSTEM,
   badgeFromSource,
@@ -104,10 +105,10 @@ function emitEngine(badge: EngineBadgeInfo, feature: string = SYSTEM) {
  *
  * The cloud backend only exists after the Firebase project is wired up
  * (post-hackathon-night). To let the UI demonstrate all four badge states
- * BEFORE that, `?engine=sim_cloud|sim_fallback` short-circuits `ask()` in
- * demo mode with a clearly labelled SIMULATED badge. Real runs never touch
- * this path: simulation requires BOTH demo mode AND the explicit URL flag,
- * and every simulated badge carries "(simulated)" in its label.
+ * BEFORE that, `?engine=sim_cloud|sim_fallback` short-circuits `generate()` in
+ * demo mode with a clearly labelled SIMULATED badge (the texts come from sim.ts).
+ * Real runs never touch this path: simulation requires BOTH demo mode AND the
+ * explicit URL flag, and every simulated badge carries "(simulated)" in its label.
  */
 
 export type SimulationKind = "off" | "cloud" | "fallback";
@@ -144,24 +145,13 @@ function isSimulated(): boolean {
 }
 
 function simulatedAnswer(prompt: string): AiAnswer {
-  const wantsJson = prompt.includes("structured defect record");
-  let text: string;
-  if (wantsJson) {
-    // Synthesise the record with the transparent rule-based extractor so the
-    // demoed output stays plausible; the badge says the engine was simulated.
-    const note = prompt.split("Engineer's note:").pop() ?? "";
-    text = JSON.stringify(ruleBasedStructure(note.trim()));
-  } else if (prompt.includes("inspection report")) {
-    text = "## Simulated report draft\n\n(simulated cloud output — the real Gemini backend is wired at Firebase project creation)";
-  } else {
-    text = "(simulated cloud answer — demonstrated for the engine-badge UI state only)";
-  }
+  // What each call gets is decided by the marker that identifies its prompt (sim.ts).
   const badge: EngineBadgeInfo =
     simulation === "cloud"
       ? { engine: "in_cloud", fellBack: false, label: "Cloud · Gemini (simulated)" }
       : { engine: "in_cloud", fellBack: true, label: "Fell back to cloud · Gemini (simulated)" };
   // No engine event here: the caller emits it, once, for the answer that is used.
-  return { text, badge };
+  return { text: simulatedText(prompt), badge };
 }
 
 let aiService: AI | null = null;
@@ -326,7 +316,7 @@ export async function structureNote(note: string): Promise<{ record: DefectJson;
     () =>
       generate(
         InferenceMode.PREFER_ON_DEVICE,
-        `${STRUCTURE_PROMPT}\n\nEngineer's note:\n${note}`,
+        `${STRUCTURE_PROMPT}${NOTE_MARK}${note}`,
         { responseMimeType: "application/json", responseSchema: DEFECT_SCHEMA, temperature: 0.1 },
         true,
       ),
@@ -372,7 +362,7 @@ export async function draftReport(records: DefectJson[]): Promise<AiAnswer> {
   const budgetMs = await callBudgetMs();
   try {
     return await answerWithinBudget(
-      () => generate(InferenceMode.ONLY_IN_CLOUD, `${REPORT_PROMPT}\n\nRecords:\n${recordsText}`, { temperature: 0.4 }, false),
+      () => generate(InferenceMode.ONLY_IN_CLOUD, `${REPORT_PROMPT}${RECORDS_MARK}${recordsText}`, { temperature: 0.4 }, false),
       budgetMs,
       reportWithoutEngine, // a timed-out call is answered with the badge alone; other failures go on
       (a) => emitEngine(a.badge, "F3 report"),

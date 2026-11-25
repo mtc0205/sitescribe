@@ -381,6 +381,22 @@ await simPage.click("#qa-btn");
 await poll(simPage, () => document.querySelector("#qa-out .ai-head .chip")?.textContent ?? "");
 await simPage.click("#report-btn");
 await poll(simPage, () => document.querySelector("#report-out .ai-head .chip")?.textContent ?? "");
+// Until 2026-11-25 the "report" was a JSON record built from the prompt text: the report
+// prompt contains "structured defect record" too, and that phrase was tested first.
+const simReport = await simPage.evaluate(() => ({
+  text: document.querySelector("#report-out .report")?.textContent ?? "",
+  badge: document.querySelector("#report-out .ai-head .chip")?.textContent ?? "",
+  records: document.querySelectorAll("#record-list .record").length,
+}));
+check(
+  "sim_cloud · the simulated report draft is a short report that says (simulated) — not a JSON record built from the prompt",
+  simReport.text.startsWith("## Simulated inspection report") &&
+    /\(simulated cloud output/.test(simReport.text) &&
+    simReport.text.includes(`### Records in this draft (${simReport.records})`) &&
+    !simReport.text.trimStart().startsWith("{") &&
+    /simulated/.test(simReport.badge),
+  JSON.stringify({ badge: simReport.badge, head: simReport.text.split("\n").slice(0, 2).join(" | "), records: simReport.records }),
+);
 const cloudChips = await simPage.evaluate(() => [...document.querySelectorAll(".chip")].map((c) => c.textContent.replace(/\s+/g, " ").trim()).filter((t) => /cloud/i.test(t)));
 // Six chips name the cloud engine by now (answer badge, two record cards, severity check,
 // Q&A, report) plus the status chip whenever it shows the latest answer rather than the

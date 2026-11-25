@@ -7,7 +7,7 @@
     "build": "tsc --noEmit && vite build",
     "check": "tsc --noEmit",
     "preview": "vite preview",
-    "test": "node --test tests/extract.test.ts tests/engine.test.ts tests/budget.test.ts tests/flags.test.ts tests/merge.test.ts tests/bootstrap-env.test.mjs tests/base-url.test.mjs tests/format.test.ts tests/script-vo.test.mjs tests/assemble-core.test.mjs"
+    "test": "node --test tests/extract.test.ts tests/engine.test.ts tests/budget.test.ts tests/sim.test.ts tests/flags.test.ts tests/merge.test.ts tests/bootstrap-env.test.mjs tests/base-url.test.mjs tests/format.test.ts tests/script-vo.test.mjs tests/assemble-core.test.mjs"
   },
   "keywords": [
     "firebase",
