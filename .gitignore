@@ -7,3 +7,6 @@ dist/
 !.env.example
 *.log
 .DS_Store
+
+# firebase-tools local state (hosting cache, config cache)
+.firebase/

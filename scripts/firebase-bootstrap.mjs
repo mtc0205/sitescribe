@@ -23,6 +23,8 @@
  *   node scripts/firebase-bootstrap.mjs --login         # also open the login window
  *   node scripts/firebase-bootstrap.mjs --deploy-only   # after pasting App Check keys:
  *                                                        # rebuild + redeploy + re-verify
+ *   node scripts/firebase-bootstrap.mjs --existing-project --project-id <id>
+ *                                                        # project made in the console
  * Options: --project-id <id>  --display-name <n>  --app-name <n>  --location <loc>
  */
 import { spawn, spawnSync } from "node:child_process";
@@ -43,6 +45,9 @@ const opt = (name, dflt) => {
 const DRY = args.includes("--dry-run");
 const WANT_LOGIN = args.includes("--login");
 const DEPLOY_ONLY = args.includes("--deploy-only");
+// --existing-project: the project was created elsewhere (Firebase console) and
+// already has Firebase on it — `projects:create` refuses an id that exists.
+const EXISTING = args.includes("--existing-project");
 const PROJECT_ID = opt("project-id", "sitescribe-" + Math.random().toString(36).slice(2, 6));
 const DISPLAY_NAME = opt("display-name", "SiteScribe");
 const APP_NAME = opt("app-name", "SiteScribe Web");
@@ -124,8 +129,12 @@ if (DEPLOY_ONLY) {
   if (!sdkConfig?.projectId) die(".env has no valid VITE_FIREBASE_CONFIG.");
   log(`deploy-only: project ${sdkConfig.projectId}`);
 } else {
-  log(`step 1: creating project ${PROJECT_ID} ("${DISPLAY_NAME}") …`);
-  fb(["projects:create", PROJECT_ID, "-n", DISPLAY_NAME]);
+  if (EXISTING) {
+    log(`step 1: using the existing Firebase project ${PROJECT_ID} (created outside this script)`);
+  } else {
+    log(`step 1: creating project ${PROJECT_ID} ("${DISPLAY_NAME}") …`);
+    fb(["projects:create", PROJECT_ID, "-n", DISPLAY_NAME]);
+  }
 
   log("step 2: creating the web app (or reusing it) …");
   const created = fb(["apps:create", "web", APP_NAME, "--project", PROJECT_ID], { fatal: false });
