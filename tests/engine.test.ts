@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { badgeFromSource, recordEngine, recordEngineLabel, settleStructureReply, hybridModelParams, takesChip, SYSTEM } from "../src/engine.ts";
+import { badgeFromSource, recordEngine, recordEngineLabel, settleStructureReply, hybridModelParams, takesChip, SYSTEM, cloudNotAvailableOnProject, BudgetExceeded } from "../src/engine.ts";
 import { ruleBasedStructure } from "../src/extract.ts";
 import { DEFAULT_CLOUD_MODEL } from "../src/flags.ts";
 import type { EngineBadgeInfo } from "../src/types.ts";
@@ -116,6 +116,25 @@ test("usable reply: the model's fields and the model's own badge, untouched", ()
     assert.equal(outcome.badge, replyBadge);
     assert.equal(recordEngine(outcome.badge), source === "on_device" ? "on_device" : source === "in_cloud" ? "in_cloud" : "unknown");
   }
+});
+
+// ---- a cloud engine the project cannot use ----
+
+test("cloudNotAvailableOnProject: the AI Logic SDK's refusal of 2026-11-26, and nothing else", () => {
+  // The real project's answer, as the SDK delivered it (message, code, customErrorData).
+  const sdk = Object.assign(
+    new Error(
+      "AI: Error fetching from https://firebasevertexai.googleapis.com/v1beta/projects/p/models/gemini-3.8-flash:generateContent: [403 Forbidden] The Gemini API free tier is not available for this project. To use the Gemini API, please set up billing to upgrade to the paid tier at https://aistudio.google.com/billing. For more information, see https://ai.google.dev/gemini-api/docs/troubleshooting#project-unavailable. (AI/fetch-error)",
+    ),
+    { code: "fetch-error", customErrorData: { status: 403, statusText: "Forbidden" } },
+  );
+  assert.equal(cloudNotAvailableOnProject(sdk), true);
+  assert.equal(cloudNotAvailableOnProject(new Error("The Gemini API free tier is not available for this project.")), true);
+  // A dead network, a hung one, another 403.
+  assert.equal(cloudNotAvailableOnProject(new TypeError("Failed to fetch")), false);
+  assert.equal(cloudNotAvailableOnProject(new BudgetExceeded(45_000)), false);
+  assert.equal(cloudNotAvailableOnProject(new Error("[403 Forbidden] The caller does not have permission")), false);
+  assert.equal(cloudNotAvailableOnProject(undefined), false);
 });
 
 // ---- record-card chip text ----

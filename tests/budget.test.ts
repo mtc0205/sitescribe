@@ -150,6 +150,73 @@ test("F4: without an engine the rule-based cross-check answers, and says it is r
   assert.match(a.text, /Rule-based check/);
 });
 
+// ---- a cloud engine the project cannot use (the real project's refusal, 2026-11-26) ----
+
+// What the AI Logic SDK rejects with when the project answers "The Gemini API free tier is not
+// available for this project": the server's sentence in `message`, the status in `customErrorData`.
+const refusal = (words, status) =>
+  Object.assign(new Error(`AI: Error fetching from https://firebasevertexai.googleapis.com/v1beta/projects/p/models/m:generateContent: ${words} (AI/fetch-error)`), {
+    code: "fetch-error",
+    customErrorData: { status, statusText: "Forbidden" },
+  });
+const FREE_TIER_WORDS =
+  "[403 Forbidden] The Gemini API free tier is not available for this project. To use the Gemini API, please set up billing to upgrade to the paid tier at https://aistudio.google.com/billing. For more information, see https://ai.google.dev/gemini-api/docs/troubleshooting#project-unavailable.";
+const FREE_TIER = refusal(FREE_TIER_WORDS, 403);
+const ANOTHER_403 = refusal("[403 Forbidden] The caller does not have permission", 403);
+const RECORD = { component: "web of girder G2", defectType: "crack", quantity: "2 mm", severity: "moderate", notes: "" };
+const CLOUD_NOT_AVAILABLE = "the cloud engine is not available on this project";
+
+test("F1: the cloud engine not available on this project — a rule-based record, one event, and the badge says why", async () => {
+  const emitted: AiAnswer[] = [];
+  const out = await structureWithinBudget(
+    async () => {
+      throw FREE_TIER;
+    },
+    NOTE,
+    1_000,
+    (a) => emitted.push(a),
+  );
+  assert.equal(out.record.component, ruleBasedStructure(NOTE).component); // the rules' fields
+  assert.equal(out.answer.badge.label, `Rule-based fallback (${CLOUD_NOT_AVAILABLE})`);
+  assert.equal(out.answer.badge.short, "Rule-based (cloud not available on this project)");
+  assert.deepEqual(labels(emitted), [`Rule-based fallback (${CLOUD_NOT_AVAILABLE})`]); // one event: this badge
+});
+
+test("F2, F3 and F4: the same refusal, each in its own honest state", () => {
+  const f2 = fieldQaWithoutEngine(FREE_TIER);
+  assert.equal(label(f2), `No engine reachable (${CLOUD_NOT_AVAILABLE})`);
+  assert.match(f2.text, /^No engine answered: there is no on-device model on this device, and the cloud engine is not available on this project\. Defect capture still works/);
+
+  const f3 = reportWithoutEngine(FREE_TIER); // answered, not passed on: the cloud is this task's only engine
+  assert.equal(f3.text, ""); // no report, and so no report buttons
+  assert.equal(label(f3), `Report drafting unavailable — ${CLOUD_NOT_AVAILABLE}`);
+  assert.equal(f3.badge.short, "Report drafting unavailable");
+
+  const f4 = severityWithoutEngine(RECORD, FREE_TIER);
+  assert.equal(label(f4), `Rule-based fallback (${CLOUD_NOT_AVAILABLE})`);
+  assert.match(f4.text, /Rule-based check/);
+});
+
+test("answerWithinBudget: the report's refusal is emitted once, as a timed-out call is", async () => {
+  const emitted: AiAnswer[] = [];
+  const out = await answerWithinBudget(
+    async () => {
+      throw FREE_TIER;
+    },
+    1_000,
+    reportWithoutEngine,
+    (a) => emitted.push(a),
+  );
+  assert.equal(label(out), `Report drafting unavailable — ${CLOUD_NOT_AVAILABLE}`);
+  assert.deepEqual(emitted, [out]);
+});
+
+test("any other failure keeps the usual wording — another 403 is not the free-tier refusal", () => {
+  assert.equal(label(fieldQaWithoutEngine(ANOTHER_403)), "No engine reachable (offline, no device model)");
+  assert.throws(() => reportWithoutEngine(ANOTHER_403), /does not have permission/);
+  assert.equal(label(severityWithoutEngine(RECORD, ANOTHER_403)), FALLBACK_LABEL);
+});
+
 // ---- F1: a reply that arrives after the budget must touch neither chip nor record ----
 
 const NOTE = "Longitudinal crack on web of girder G2, about 2 mm wide, 3 m long.";

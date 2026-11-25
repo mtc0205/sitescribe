@@ -208,8 +208,28 @@ export async function answerWithinBudget(
 
 /* ---------- what the user gets when no engine answered (F2-F4) ---------- */
 
+/**
+ * The cloud engine refused the call because this project cannot use the Gemini API.
+ * Firebase AI Logic answers HTTP 403 with "The Gemini API free tier is not available for
+ * this project" (seen on the real project on 2026-11-26): the account's standing with
+ * Google, which no retry and no connection changes. The AI Logic SDK passes the server's
+ * sentence on in `message`, so that is what is read; a 403 without it is something else.
+ */
+export function cloudNotAvailableOnProject(reason: unknown): boolean {
+  const message = (reason as { message?: unknown } | null)?.message;
+  return /free tier is not available/i.test(String(message ?? reason ?? ""));
+}
+
+/** The badge of a rule-based answer. It says why no model replied when the cloud engine is
+ *  not available on this project — a cause the visitor cannot retry away. */
+function rulesBadge(reason: unknown): EngineBadgeInfo {
+  return cloudNotAvailableOnProject(reason)
+    ? { engine: "unavailable", label: "Rule-based fallback (the cloud engine is not available on this project)", short: "Rule-based (cloud not available on this project)" }
+    : { engine: "unavailable", label: "Rule-based fallback (no AI engine reachable)", short: "Rule-based fallback" };
+}
+
 /** F2. A failure is "no engine reachable"; a timed-out call says that instead — a hung
- *  connection is not an offline device. */
+ *  connection is not an offline device — and so does a cloud engine the project cannot use. */
 export function fieldQaWithoutEngine(reason: unknown): AiAnswer {
   const captureStillWorks = "Defect capture still works: notes are structured by transparent rules and will sync later.";
   if (reason instanceof BudgetExceeded) {
@@ -218,15 +238,23 @@ export function fieldQaWithoutEngine(reason: unknown): AiAnswer {
       badge: { engine: "unavailable", label: "No engine answered in time", short: "No engine answered in time" },
     };
   }
+  if (cloudNotAvailableOnProject(reason)) {
+    return {
+      text: `No engine answered: there is no on-device model on this device, and the cloud engine is not available on this project. ${captureStillWorks}`,
+      badge: { engine: "unavailable", label: "No engine reachable (the cloud engine is not available on this project)", short: "No engine reachable" },
+    };
+  }
   return {
     text: `Field Q&A needs either the on-device model or a connection — none was reachable. ${captureStillWorks}`,
     badge: { engine: "unavailable", label: "No engine reachable (offline, no device model)", short: "No engine reachable" },
   };
 }
 
-/** F3. Only a timed-out call is answered here; any other failure is passed on to the
- *  caller, which reports it ("Report drafting failed: …"). The text is empty on purpose:
- *  the UI shows the badge alone, as it does offline. */
+/** F3. Only a timed-out call is answered here — and one the cloud engine refused because it is
+ *  not available on this project, which is the only engine this task has: the badge says so,
+ *  alone, and no report is offered. Any other failure is passed on to the caller, which
+ *  reports it ("Report drafting failed: …"). The text is empty on purpose: the UI shows the
+ *  badge alone, as it does offline. */
 export function reportWithoutEngine(reason: unknown): AiAnswer {
   if (reason instanceof BudgetExceeded) {
     return {
@@ -234,15 +262,21 @@ export function reportWithoutEngine(reason: unknown): AiAnswer {
       badge: { engine: "unavailable", label: "Report drafting timed out — the cloud engine did not answer in time", short: "Report drafting timed out" },
     };
   }
+  if (cloudNotAvailableOnProject(reason)) {
+    return {
+      text: "",
+      badge: { engine: "unavailable", label: "Report drafting unavailable — the cloud engine is not available on this project", short: "Report drafting unavailable" },
+    };
+  }
   throw reason;
 }
 
 /** F4. The rule-based cross-check against the same reference card, whatever kept the
  *  engine from answering. */
-export function severityWithoutEngine(record: DefectJson, _reason: unknown): AiAnswer {
+export function severityWithoutEngine(record: DefectJson, reason: unknown): AiAnswer {
   return {
     text: ruleBasedCrossCheck(record),
-    badge: { engine: "unavailable", label: "Rule-based fallback (no AI engine reachable)", short: "Rule-based fallback" },
+    badge: rulesBadge(reason),
   };
 }
 
@@ -271,7 +305,7 @@ export async function structureWithinBudget(
     return { record: outcome.record, answer };
   } catch (e) {
     hooks.onFallback?.(e);
-    const answer: AiAnswer = { text: "", badge: { engine: "unavailable", label: "Rule-based fallback (no AI engine reachable)", short: "Rule-based fallback" } };
+    const answer: AiAnswer = { text: "", badge: rulesBadge(e) };
     emit(answer);
     return { record: ruleBasedStructure(note), answer };
   }
