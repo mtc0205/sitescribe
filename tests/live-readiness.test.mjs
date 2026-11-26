@@ -111,7 +111,7 @@ test("classifyAiFailure: the rest is OTHER, and the message comes along as given
   assert.equal(classifyAiFailure(undefined).outcome, "OTHER");
 });
 
-test("classifyAiFailure: a spent free-tier quota is FREE_TIER_QUOTA — the tier is the account's, only today's requests are gone", () => {
+test("classifyAiFailure: a spent free-tier quota is FREE_TIER_QUOTA — metered on the free tier, only today's requests are gone", () => {
   // What the project answered from 2026-11-27 02:37, after a week of the 403 above.
   const words = "[429 Too Many Requests] You exceeded your current quota, please check your plan and billing details. * Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20";
   assert.deepEqual(classifyAiFailure({ stage: "gemini", status: 429, code: "fetch-error", message: words }), { outcome: "FREE_TIER_QUOTA", detail: words });
@@ -181,7 +181,7 @@ test("verdict: each Gemini outcome names its own next step", () => {
   assert.match(line2("OTHER"), /look at the Gemini error reported above \(OTHER\)/);
   assert.doesNotMatch(line2("OTHER"), /free tier/); // never the free-tier advice for an error that is not it
   // A spent free-tier quota is nobody's step to do: it refills by itself.
-  assert.match(line2("FREE_TIER_QUOTA"), /no user step — the Gemini free tier IS available to this account/);
+  assert.match(line2("FREE_TIER_QUOTA"), /no user step for this one — the project's Gemini calls are being metered on the FREE TIER \(20 requests a day\)/);
   assert.doesNotMatch(line2("FREE_TIER_QUOTA"), /you —/);
   assert.match(verdict(withStates(["gemini", false, "FREE_TIER_QUOTA"]), URLS).lines[0], /^NOT READY — 4\/5 checks green; red: gemini: FREE_TIER_QUOTA\./);
 });

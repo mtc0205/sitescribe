@@ -70,8 +70,8 @@ export const DETAIL_MAX = 360;
  * The two that matter most read alike from the outside — a 403 — and mean
  * different things: "the Gemini API free tier is not available for this
  * project" is the account's standing with Google, anything else 403 is not.
- * A 429 that names the free-tier metric is the good news: the tier IS the
- * account's, and only today's free requests are spent.
+ * A 429 that names the free-tier metric is the better state: the calls are
+ * metered on the free tier, and only today's free requests are spent.
  */
 export function classifyAiFailure(f) {
   const message = String(f?.message ?? "");
@@ -84,8 +84,9 @@ export function classifyAiFailure(f) {
   // and what the SDK calls it when the AI Logic API is disabled for the project.
   if (/genai config not found/i.test(text) || /api-not-enabled/i.test(String(f?.code ?? ""))) return { outcome: "GENAI_CONFIG_NOT_FOUND", detail: collapse(message, DETAIL_MAX) };
   if (status === 403 && /free tier is not available|project-unavailable|PROJECT_UNAVAILABLE/i.test(text)) return { outcome: "FREE_TIER_UNAVAILABLE", detail: collapse(message, DETAIL_MAX) };
-  // The free tier is this account's, and today's free requests are spent. First seen the night of
-  // 2026-11-27, when the 403 above had turned into this by 02:37. Nothing to fix — it refills by itself.
+  // The project's calls are metered on the free tier, and today's free requests are spent — not the
+  // standing refusal above. First seen the night of 2026-11-27, when a week of that 403 had turned
+  // into this by 02:37. Nothing to fix; whether the tier really answers shows at the first success.
   if (status === 429 && /generate_content_free_tier_requests|exceeded your current quota/i.test(text)) return { outcome: "FREE_TIER_QUOTA", detail: collapse(message, DETAIL_MAX) };
   if ((status === 401 || status === 403) && /app[\s-]?check|attestation/i.test(text)) return { outcome: "APP_CHECK", detail: collapse(message, DETAIL_MAX) };
   if (/fetch failed|ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|UND_ERR|timed out|network/i.test(text)) return { outcome: "NETWORK", detail: collapse(message, DETAIL_MAX) };
@@ -132,7 +133,7 @@ export function verdict(checks, urls) {
     if (how === "FREE_TIER_UNAVAILABLE") {
       next.push(`you — the Gemini API free tier is unavailable for this Google account (until then capture falls back to the rule-based structurer): verify a device at ${urls.verify}, or link billing at ${urls.billing}`);
     } else if (how === "FREE_TIER_QUOTA") {
-      next.push("no user step — the Gemini free tier IS available to this account and today's free requests are spent; they refill by themselves (the message above names the metric), and no probe or rehearsal should spend a fresh refill before a recording");
+      next.push("no user step for this one — the project's Gemini calls are being metered on the FREE TIER (20 requests a day) and today's are spent; they refill by themselves (the message above names the metric and the wait). A first real answer is what proves the tier works, and no probe or rehearsal should spend a fresh refill before a recording");
     } else if (how === "GENAI_CONFIG_NOT_FOUND") {
       next.push(`you — set up the Gemini Developer API provider for this project: ${urls.consoleAiLogic} → Get started`);
     } else if (how === "APP_CHECK") {
