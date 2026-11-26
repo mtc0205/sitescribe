@@ -229,8 +229,13 @@ function rulesBadge(reason: unknown): EngineBadgeInfo {
 }
 
 /** F2. A failure is "no engine reachable"; a timed-out call says that instead — a hung
- *  connection is not an offline device — and so does a cloud engine the project cannot use. */
-export function fieldQaWithoutEngine(reason: unknown): AiAnswer {
+ *  connection is not an offline device — and so does a cloud engine the project cannot use.
+ *  `online` is the device's own answer (navigator.onLine), and a required one: offline, the
+ *  cause is that; online, the badge must not say "offline". Until 2026-11-27 it did — the
+ *  hosted app showed "No engine reachable (offline, no device model)" under an "online" chip
+ *  while the cloud call was being refused (HTTP 429) — sending the reader after a connection
+ *  that was fine, the way §6.1.1 fixed for the free-tier refusal. */
+export function fieldQaWithoutEngine(reason: unknown, online: boolean): AiAnswer {
   const captureStillWorks = "Defect capture still works: notes are structured by transparent rules and will sync later.";
   if (reason instanceof BudgetExceeded) {
     return {
@@ -242,6 +247,12 @@ export function fieldQaWithoutEngine(reason: unknown): AiAnswer {
     return {
       text: `No engine answered: there is no on-device model on this device, and the cloud engine is not available on this project. ${captureStillWorks}`,
       badge: { engine: "unavailable", label: "No engine reachable (the cloud engine is not available on this project)", short: "No engine reachable" },
+    };
+  }
+  if (online) {
+    return {
+      text: `No engine answered: there is no on-device model on this device, and the cloud engine did not answer. ${captureStillWorks}`,
+      badge: { engine: "unavailable", label: "No engine reachable (no device model, and the cloud engine did not answer)", short: "No engine reachable" },
     };
   }
   return {

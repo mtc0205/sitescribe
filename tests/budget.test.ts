@@ -128,12 +128,30 @@ test("answerWithinBudget: a withoutEngine that throws passes the failure on, and
 const label = (a: AiAnswer) => (a.badge as EngineBadgeInfo).label;
 
 test("F2: a hung connection says so — it is not passed off as an offline device", () => {
-  const timedOut = fieldQaWithoutEngine(new BudgetExceeded(12_000));
+  const timedOut = fieldQaWithoutEngine(new BudgetExceeded(12_000), true);
   assert.equal(label(timedOut), "No engine answered in time");
   assert.match(timedOut.text, /^No engine answered within 12 seconds/);
   assert.match(timedOut.text, /Defect capture still works/);
-  const failed = fieldQaWithoutEngine(new Error("Failed to fetch"));
+  const failed = fieldQaWithoutEngine(new Error("Failed to fetch"), false);
   assert.equal(label(failed), "No engine reachable (offline, no device model)");
+});
+
+test("F2 online (2026-11-27): a failed call does not say \"offline\" — the connection is not what failed", () => {
+  // Seen on the hosted app that night: this badge under an "online" chip while the cloud call
+  // was being refused (HTTP 429).
+  const online = fieldQaWithoutEngine(new Error("Failed to fetch"), true);
+  assert.equal(label(online), "No engine reachable (no device model, and the cloud engine did not answer)");
+  assert.equal(online.badge.short, "No engine reachable");
+  assert.match(online.text, /^No engine answered: there is no on-device model on this device, and the cloud engine did not answer\. Defect capture still works/);
+  assert.doesNotMatch(`${label(online)} ${online.text}`, /offline/i);
+  // offline keeps its wording
+  const offline = fieldQaWithoutEngine(new Error("Failed to fetch"), false);
+  assert.equal(label(offline), "No engine reachable (offline, no device model)");
+  assert.match(offline.text, /^Field Q&A needs either the on-device model or a connection — none was reachable\. Defect capture still works/);
+  // the two causes that are named — a timed-out call, the free-tier refusal — are named whatever the device's state
+  assert.equal(label(fieldQaWithoutEngine(new BudgetExceeded(12_000), false)), "No engine answered in time");
+  assert.equal(label(fieldQaWithoutEngine(FREE_TIER, true)), `No engine reachable (${CLOUD_NOT_AVAILABLE})`);
+  assert.equal(label(fieldQaWithoutEngine(FREE_TIER, false)), `No engine reachable (${CLOUD_NOT_AVAILABLE})`);
 });
 
 test("F3: a timed-out report is said so with the badge alone; other failures are passed on", () => {
@@ -183,7 +201,7 @@ test("F1: the cloud engine not available on this project — a rule-based record
 });
 
 test("F2, F3 and F4: the same refusal, each in its own honest state", () => {
-  const f2 = fieldQaWithoutEngine(FREE_TIER);
+  const f2 = fieldQaWithoutEngine(FREE_TIER, true);
   assert.equal(label(f2), `No engine reachable (${CLOUD_NOT_AVAILABLE})`);
   assert.match(f2.text, /^No engine answered: there is no on-device model on this device, and the cloud engine is not available on this project\. Defect capture still works/);
 
@@ -212,7 +230,10 @@ test("answerWithinBudget: the report's refusal is emitted once, as a timed-out c
 });
 
 test("any other failure keeps the usual wording — another 403 is not the free-tier refusal", () => {
-  assert.equal(label(fieldQaWithoutEngine(ANOTHER_403)), "No engine reachable (offline, no device model)");
+  // online, so the usual wording is the one that does not blame the connection
+  assert.equal(label(fieldQaWithoutEngine(ANOTHER_403, true)), "No engine reachable (no device model, and the cloud engine did not answer)");
+  assert.doesNotMatch(label(fieldQaWithoutEngine(ANOTHER_403, true)), new RegExp(CLOUD_NOT_AVAILABLE));
+  assert.equal(label(fieldQaWithoutEngine(ANOTHER_403, false)), "No engine reachable (offline, no device model)");
   assert.throws(() => reportWithoutEngine(ANOTHER_403), /does not have permission/);
   assert.equal(label(severityWithoutEngine(RECORD, ANOTHER_403)), FALLBACK_LABEL);
 });

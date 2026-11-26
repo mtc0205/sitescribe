@@ -33,6 +33,12 @@
  *    answered with the real project's HTTP 403 "free tier is not available";
  *    F1–F4 must each name that cause in their badge, the capture must stay a
  *    rule-based record and the report must be no report
+ *  and from the 2026-11-27 night shift:
+ *  - a cloud engine that fails for any other reason while the device is ONLINE
+ *    (e2e-25): the AI Logic request is answered with the real project's HTTP 500
+ *    "This model is currently experiencing high demand"; Q&A must not say
+ *    "offline" (it did, on the hosted app), capture and the severity check stay
+ *    rule-based, and the report is the SDK's error — never a report
  * Asserts the full loop; exits non-zero on any failure.
  *
  * Base URL: --url <base> or --port <n> (default http://127.0.0.1:5173, the
@@ -819,6 +825,85 @@ check(
     [rowFor("F1 structure"), rowFor("F4 severity check"), rowFor("F2 field QA"), rowFor("F3 report")].every((c) => !!c && c.includes(NOT_AVAILABLE)) &&
     !refusedLog.some((r) => /Fell back to cloud|Cloud · Gemini|no AI engine reachable/.test(r.chip)),
   JSON.stringify({ refusedPosts, refusedLog }),
+);
+
+// ---- 12. a cloud engine that fails for any other reason, while the device is online (2026-11-27) ----
+// That night the real project answered HTTP 500 "This model is currently experiencing high demand"
+// and, later, HTTP 429 "You exceeded your current quota" — neither is the free-tier refusal. On
+// the hosted app F2's badge then read "No engine reachable (offline, no device model)" under an
+// "online" chip: a connection that was fine got the blame. The same 500 is canned in here (the
+// device is online). F2 must name the real cause; F1 and F4 keep their rule-based answer; the
+// report is the red block that carries the SDK's own error — and no report, no cloud badge.
+const HIGH_DEMAND_BODY = JSON.stringify({
+  error: { code: 500, message: "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.", status: "INTERNAL" },
+});
+const DID_NOT_ANSWER = "no device model, and the cloud engine did not answer";
+const failedPage = await browser.newPage();
+const failedCdp = await failedPage.createCDPSession();
+let failedPosts = 0;
+failedCdp.on("Fetch.requestPaused", async (ev) => {
+  const cors = [{ name: "Access-Control-Allow-Origin", value: "*" }];
+  if (ev.request.method === "OPTIONS") {
+    await failedCdp.send("Fetch.fulfillRequest", { requestId: ev.requestId, responseCode: 204, responseHeaders: [...cors, { name: "Access-Control-Allow-Methods", value: "POST, OPTIONS" }, { name: "Access-Control-Allow-Headers", value: ev.request.headers["Access-Control-Request-Headers"] ?? "*" }] });
+    return;
+  }
+  failedPosts++;
+  await failedCdp.send("Fetch.fulfillRequest", { requestId: ev.requestId, responseCode: 500, responseHeaders: [...cors, { name: "Content-Type", value: "application/json" }], body: Buffer.from(HIGH_DEMAND_BODY).toString("base64") });
+});
+await failedCdp.send("Fetch.enable", { patterns: [{ urlPattern: "*generateContent*", requestStage: "Request" }] });
+await failedPage.goto(URL_BASE + "/?engine=off", { waitUntil: "load", timeout: 30000 });
+await failedPage.waitForSelector("#project-list .card", { timeout: 30000 });
+await sleep(800);
+await failedPage.click("#project-list .card");
+await sleep(800);
+const failedCap = await captureOn(failedPage, NOTE_ONLINE);
+await failedPage.click("#record-list .record .check-btn");
+await failedPage.type("#qa-input", "What does efflorescence usually indicate?");
+await failedPage.click("#qa-btn");
+await failedPage.click("#report-btn");
+const failedRest = await poll(
+  failedPage,
+  () => {
+    const f4 = document.querySelector("#record-list .record .check-out")?.textContent ?? "";
+    const f2 = document.querySelector("#qa-out .ai-head .chip")?.textContent ?? "";
+    const f3out = document.querySelector("#report-out");
+    return f4 && !/checking/.test(f4) && f2 && f3out && f3out.children.length > 0 && !f3out.querySelector(":scope > .muted")
+      ? {
+          online: navigator.onLine,
+          connChip: document.querySelector(".topbar .chip")?.textContent?.trim() ?? null, // the connectivity chip is the top bar's first chip
+          f4Badge: document.querySelector("#record-list .record .check-out .chip")?.textContent ?? null,
+          f2,
+          f2Text: document.querySelector("#qa-out .ai-body")?.textContent ?? null,
+          f3Badge: document.querySelector("#report-out .ai-head .chip")?.textContent ?? null,
+          f3Error: document.querySelector("#report-out .ai-block.error")?.textContent ?? null,
+          f3Report: !!document.querySelector("#report-out .report, #report-out .report-actions"),
+        }
+      : null;
+  },
+  { timeoutMs: 20_000 },
+);
+await failedPage.screenshot({ path: SHOTS + "\\e2e-25-online-cloud-fails-f1-f2-f3-f4.png", fullPage: true });
+check(
+  "online, cloud fails (500) · Q&A does not say \"offline\": the badge names that the cloud engine did not answer",
+  !!failedRest &&
+    failedRest.online === true &&
+    /online/i.test(failedRest.connChip ?? "") &&
+    failedRest.f2 === `⚙ No engine reachable (${DID_NOT_ANSWER})` &&
+    /the cloud engine did not answer/.test(failedRest.f2Text ?? "") &&
+    !/offline/i.test(failedRest.f2 + " " + (failedRest.f2Text ?? "")),
+  JSON.stringify(failedRest && { online: failedRest.online, connChip: failedRest.connChip, f2: failedRest.f2, f2Text: failedRest.f2Text }),
+);
+check(
+  "online, cloud fails (500) · capture and severity check stay rule-based; the report is the SDK's error, never a report, and no cloud badge appears",
+  failedCap.badge === "⚙ Rule-based fallback (no AI engine reachable)" &&
+    !!failedRest &&
+    failedRest.f4Badge === "⚙ Rule-based fallback (no AI engine reachable)" &&
+    failedRest.f3Badge === null &&
+    /Report drafting failed/.test(failedRest.f3Error ?? "") &&
+    /high demand/.test(failedRest.f3Error ?? "") &&
+    failedRest.f3Report === false &&
+    failedPosts === 4,
+  JSON.stringify({ badge: failedCap.badge, failedPosts, f4Badge: failedRest?.f4Badge, f3Badge: failedRest?.f3Badge, f3Error: failedRest?.f3Error?.slice(0, 160), f3Report: failedRest?.f3Report }),
 );
 } catch (e) {
   check("e2e-full ran to completion", false, String(e));

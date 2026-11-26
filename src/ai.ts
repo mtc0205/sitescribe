@@ -341,9 +341,10 @@ export async function askFieldQuestion(question: string): Promise<AiAnswer> {
     () => generate(InferenceMode.PREFER_ON_DEVICE, `${QA_PROMPT}\n\nQuestion: ${question}`, { temperature: 0.3 }, true),
     budgetMs,
     (e) => {
-      // Honest degradation: say what happened, never fake an answer.
+      // Honest degradation: say what happened, never fake an answer. The device's own state
+      // decides whether the badge may say "offline" (engine.ts, fieldQaWithoutEngine).
       console.warn("[ai] field QA failed:", e);
-      return fieldQaWithoutEngine(e);
+      return fieldQaWithoutEngine(e, navigator.onLine);
     },
     (a) => emitEngine(a.badge, "F2 field QA"),
   );
