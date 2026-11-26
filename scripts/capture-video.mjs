@@ -19,8 +19,20 @@
  * --final unless the captures came from a hosted https URL).
  *
  * Shots (see SHOTS below): intro, offline-capture, severity-check, sync,
- * report, engine-panel. `--shots all` (default) records everything in order;
+ * report, qa, engine-panel. `--shots all` (default) records everything in order;
  * a shot that fails is reported and skipped, the others still record.
+ *
+ * Against the hosted URL (https) with a fresh profile the app owns no project:
+ * the intro waits for the anonymous sign-in and, when the list is empty, creates
+ * one through the UI — ＋ New and its two prompt() dialogs, as a visitor would —
+ * before the recorder starts (off camera). The ?engine=off switch is a demo-mode
+ * flag, so a hosted run opens the plain URL.
+ *
+ * --plain-chrome: a throw-away profile and WITHOUT the on-device stack (puppeteer's
+ * default --disable-features list keeps it off; this script re-enables it only for
+ * the on-device profile). Use it for a run that must not load or download Gemini
+ * Nano — on a machine short of RAM, or to show the honest rule-based fallbacks.
+ * The default is unchanged: the shared on-device evidence profile, stack enabled.
  *
  * Chrome launch note: the default profile is the shared on-device evidence
  * profile and the launch args keep OptimizationHints enabled — see README
@@ -28,10 +40,11 @@
  */
 import puppeteer from "puppeteer-core";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { ensureServesSiteScribe } from "./lib/base-url.mjs";
+import { ensureServesSiteScribe, resolveBaseUrl } from "./lib/base-url.mjs";
 
 const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -41,12 +54,24 @@ const opt = (name, dflt) => {
   const i = args.indexOf("--" + name);
   return i !== -1 && args[i + 1] && !args[i + 1].startsWith("--") ? args[i + 1] : dflt;
 };
-const URL_BASE = opt("url", "http://127.0.0.1:5173").replace(/\/+$/, ""); // default: local dev build
+// Resolved like every other harness (lib/base-url.mjs): --url > --port > $SS_BASE_URL / $SS_PORT
+// > the dev-server default. Until 2026-11-27 this script read --url alone, so --port was
+// silently ignored and the run went to the default port.
+const URL_BASE = resolveBaseUrl(args); // no trailing slash; default: local dev build
 const OUT = path.resolve(ROOT, opt("out", path.join("..", "tools", "video")));
+// --plain-chrome: never touch the on-device evidence profile, never enable the
+// on-device stack (see the header). The temporary profile is removed at the end.
+const PLAIN = args.includes("--plain-chrome");
+const HOSTED = /^https:\/\//i.test(URL_BASE);
 // Shared on-device evidence profile (the Chrome profile that already has the
 // Gemini Nano model component downloaded — a fresh profile would re-download
 // ~4 GB). Overridable with --profile <dir>.
-const PROFILE = opt("profile", path.join(ROOT, "..", "tools", "nano2", "profiles", "E1b"));
+const PROFILE = PLAIN
+  ? fs.mkdtempSync(path.join(os.tmpdir(), "ss-capture-plain-"))
+  : opt("profile", path.join(ROOT, "..", "tools", "nano2", "profiles", "E1b"));
+// What ＋ New asks for on a hosted run that owns no project yet (name, then structure type).
+const PROJECT_NAME = opt("project-name", "Girder Bridge No.3 — Qiantang tributary");
+const PROJECT_TYPE = opt("project-type", "bridge");
 const WANTED = (opt("shots", "all") === "all" ? null : opt("shots", "").split(","));
 const WIDTH = parseInt(opt("width", "1280"), 10);
 const HEIGHT = parseInt(opt("height", "800"), 10);
@@ -75,6 +100,10 @@ class Recorder {
   }
   async start() {
     fs.mkdirSync(this.dir, { recursive: true });
+    // A new take replaces the old one in this directory: no frame of an earlier take may be
+    // left beside this one's (listed or not).
+    for (const f of fs.readdirSync(this.dir)) if (/^frame_\d+\.jpg$/.test(f) || f === "manifest.json") fs.rmSync(path.join(this.dir, f), { force: true });
+    this.writeError = false;
     this.recording = true;
     await this.cdp.send("Page.startScreencast", {
       format: "jpeg",
@@ -83,6 +112,21 @@ class Recorder {
       maxHeight: HEIGHT * DPR,
       everyFrame: true,
     });
+  }
+  /** A take that failed half-way is not footage: stop the screencast, forget its frames and
+   *  remove them. Until 2026-11-27 a failed shot left the screencast running, and the next
+   *  shot's first frame was written into a directory not made yet — which ended the session. */
+  async abort() {
+    await this.cdp.send("Page.stopScreencast").catch(() => {});
+    this.recording = false;
+    this.frames = [];
+    this.marks = [];
+    this.n = 0;
+    try {
+      if (fs.existsSync(this.dir)) for (const f of fs.readdirSync(this.dir)) if (/^frame_\d+\.jpg$/.test(f)) fs.rmSync(path.join(this.dir, f), { force: true });
+    } catch {
+      /* nothing to clean */
+    }
   }
   async stop(meta = {}) {
     await this.cdp.send("Page.stopScreencast").catch(() => {});
@@ -106,8 +150,18 @@ class Recorder {
   }
   async frame({ data, metadata }) {
     if (!this.recording) return;
-    const file = `frame_${String(this.n++).padStart(6, "0")}.jpg`;
-    fs.writeFileSync(path.join(this.dir, file), Buffer.from(data, "base64"));
+    const file = `frame_${String(this.n).padStart(6, "0")}.jpg`;
+    try {
+      fs.writeFileSync(path.join(this.dir, file), Buffer.from(data, "base64"));
+    } catch (e) {
+      // A frame that cannot be written must not take the whole session down.
+      if (!this.writeError) {
+        this.writeError = true;
+        console.error(`[capture] could not write a frame into ${this.dir}: ${String(e).slice(0, 160)}`);
+      }
+      return;
+    }
+    this.n++;
     this.frames.push({ file, ts: metadata?.timestamp ?? Date.now() });
   }
 }
@@ -139,8 +193,54 @@ async function evidence(page, extra = {}) {
       };
     }),
     report: (await text(page, "#report-out"))?.slice(0, 160) ?? null,
+    reportBadge: await text(page, "#report-out .ai-head .chip"),
+    // An F3 call that failed for any other reason than a timeout or the free-tier
+    // refusal is shown as this red block, with no badge (SPEC §6.1.1) — quote it.
+    reportError: (await text(page, "#report-out .ai-block.error"))?.slice(0, 400) ?? null,
     ...extra,
   };
+}
+
+/**
+ * A hosted session with a fresh profile owns no project. Wait until the anonymous
+ * sign-in has settled ("No projects yet — …"), and when the list is empty create
+ * one through the UI: ＋ New, then its two prompt() dialogs (name, structure type).
+ * Returns what the Projects panel said when the sign-in had settled.
+ */
+async function ensureHostedProject(page) {
+  const state = () =>
+    page.evaluate(() => ({
+      cards: document.querySelectorAll("#project-list .card").length,
+      text: document.querySelector("#project-list")?.textContent?.replace(/\s+/g, " ").trim().slice(0, 160) ?? null,
+    }));
+  let s = null;
+  for (let i = 0; i < 120; i++) {
+    s = await state();
+    if (s.cards || (s.text && !/signing in/i.test(s.text))) break;
+    await sleep(500);
+  }
+  console.log(`[capture]   hosted sign-in settled: ${JSON.stringify(s)}`);
+  if (s.cards) return s;
+  const answers = [PROJECT_NAME, PROJECT_TYPE];
+  const asked = [];
+  const onDialog = async (d) => {
+    if (d.type() === "prompt" && asked.length < answers.length) {
+      asked.push({ question: d.message(), answer: answers[asked.length] });
+      await d.accept(answers[asked.length - 1]);
+    } else {
+      await d.dismiss();
+    }
+  };
+  page.on("dialog", onDialog);
+  try {
+    await page.click("#new-project");
+    await page.waitForFunction(() => document.querySelectorAll("#project-list .card").length > 0, { timeout: 30_000 });
+  } finally {
+    page.off("dialog", onDialog);
+  }
+  s = await state();
+  console.log(`[capture]   project created through ＋ New: ${JSON.stringify(asked)} → ${JSON.stringify(s)}`);
+  return s;
 }
 
 /** Scroll smoothly to `toY` over `ms` — real UI motion for long narrations. */
@@ -156,7 +256,9 @@ async function slowScroll(page, toY, ms) {
 }
 
 async function shotIntro(page, rec, ctx) {
-  await page.goto(URL_BASE + "/?engine=off", { waitUntil: "load", timeout: 30_000 });
+  // ?engine=off is a demo-mode switch (it has no effect in live mode): a hosted run opens the plain URL.
+  await page.goto(HOSTED ? URL_BASE + "/" : URL_BASE + "/?engine=off", { waitUntil: "load", timeout: HOSTED ? 60_000 : 30_000 });
+  if (HOSTED) await ensureHostedProject(page);
   await waitFor(page, "#project-list .card");
   await sleep(600); // let the engine probe settle so the status chip is not mid-probe
   await rec.start();
@@ -235,10 +337,11 @@ async function shotSync(page, rec, ctx) {
   await sleep(1200);
   rec.mark("sync-click");
   await page.click("#sync-btn");
-  // wait for the real flip (pending → synced), not just for any synced chip
+  // wait for the real flip (pending → synced), not just for any synced chip. Against the
+  // hosted app the Firestore client has to find its way back first, so allow twice as long.
   await page
-    .waitForFunction(() => document.querySelectorAll("#record-list .chip.pending").length === 0, { timeout: 60_000 })
-    .catch(() => console.log("[capture]   sync: not every pending chip flipped within 60 s"));
+    .waitForFunction(() => document.querySelectorAll("#record-list .chip.pending").length === 0, { timeout: HOSTED ? 120_000 : 60_000 })
+    .catch(() => console.log(`[capture]   sync: not every pending chip flipped within ${HOSTED ? 120 : 60} s`));
   rec.mark("synced");
   const ev = await evidence(page, { pendingBefore, pendingAfter: await count(page, "#record-list .chip.pending"), syncButton: await text(page, "#sync-btn") });
   console.log(`[capture]   sync: pending ${ev.pendingBefore} → ${ev.pendingAfter} · button "${ev.syncButton}"`);
@@ -247,24 +350,56 @@ async function shotSync(page, rec, ctx) {
 }
 
 async function shotReport(page, rec, ctx) {
-  await page.evaluate(() => document.querySelector("#report-btn")?.scrollIntoView({ block: "start" }));
+  // Into the middle of the viewport, never to the top: the top bar is sticky (61 px), and with
+  // the button scrolled to y = 0 the click hit the bar and nothing happened — which is all the
+  // "report" take of 2026-11-24 shows (measured 2026-11-27, tools/night-2026-11-27).
+  await page.evaluate(() => document.querySelector("#report-btn")?.scrollIntoView({ block: "center" }));
   await sleep(600);
   await rec.start();
   await sleep(1200);
   rec.mark("report-click");
   await page.click("#report-btn");
+  // settled = an answer block (badge, report or the red "Report drafting failed: …" block),
+  // i.e. anything but the "drafting in cloud…" line. Until 2026-11-27 this tested the text for
+  // "drafting" — which the failure block contains too, so a refused cloud call made the shot
+  // wait out its whole timeout and fail (seen on the hosted URL, HTTP 429).
   await page.waitForFunction(() => {
     const out = document.querySelector("#report-out");
-    return out && !/drafting/.test(out.textContent ?? "");
-  }, { timeout: 120_000 });
+    return !!out && out.children.length > 0 && !out.querySelector(":scope > .muted");
+  }, { timeout: 150_000 });
   rec.mark("report-result");
   const badge = await text(page, "#report-out .ai-head .chip");
-  console.log(`[capture]   report badge: ${badge}`);
+  console.log(`[capture]   report badge: ${badge}${badge ? "" : ` · error block: ${(await text(page, "#report-out .ai-block.error"))?.slice(0, 160) ?? "none"}`}`);
   await sleep(8000); // "Now the heavy lifting — drafting today's inspection report …"
   const ev = await evidence(page, { reportBadge: badge });
   await page.evaluate(() => document.querySelector("#report-out")?.scrollIntoView({ block: "start", behavior: "smooth" }));
   await sleep(6000);
   await rec.stop({ shot: "report", narration: "beat-6-report-drafting-cloud-engine-1.mp3", evidence: ev });
+}
+
+const NOTE_QA = "What does efflorescence usually indicate?";
+
+/** F2, field Q&A. Not in the shot ↔ narration map (the storyboard has no line for it), so the
+ *  assembler does not use it; it is recorded for the evidence: whatever answered the question —
+ *  a model, or the honest "no engine" state — is quoted in this shot's manifest. */
+async function shotQa(page, rec, ctx) {
+  await page.evaluate(() => document.querySelector("#qa-input")?.scrollIntoView({ block: "center" }));
+  await sleep(600);
+  await rec.start();
+  await sleep(1200); // the viewer sees the question box before it is typed
+  rec.mark("type-question");
+  await page.type("#qa-input", NOTE_QA, { delay: 40 });
+  rec.mark("ask-click");
+  await page.click("#qa-btn");
+  await page.waitForFunction(() => {
+    const out = document.querySelector("#qa-out");
+    return !!out && out.children.length > 0 && !out.querySelector(":scope > .muted");
+  }, { timeout: 150_000 });
+  rec.mark("ask-result");
+  const badge = await text(page, "#qa-out .ai-head .chip");
+  console.log(`[capture]   Q&A badge: ${badge ?? "(none)"} · error block: ${(await text(page, "#qa-out .ai-block.error"))?.slice(0, 120) ?? "none"}`);
+  await sleep(6000);
+  await rec.stop({ shot: "qa", narration: "(no narration line — F2 is not in the shot map)", evidence: await evidence(page, { qaBadge: badge, qaText: (await text(page, "#qa-out .ai-body"))?.slice(0, 300) ?? null }) });
 }
 
 async function shotEnginePanel(page, rec, ctx) {
@@ -277,12 +412,14 @@ async function shotEnginePanel(page, rec, ctx) {
   // Since the 2026-11-24 polish the telemetry sits in a collapsed "Engine &
   // diagnostics" section (the home screen now leads with the product), so open
   // it on camera.
-  await page.evaluate(() => document.querySelector("#engine-panel")?.scrollIntoView({ behavior: "smooth" }));
+  // "center", so the summary does not end up under the sticky top bar (see shotReport).
+  await page.evaluate(() => document.querySelector("#engine-panel")?.scrollIntoView({ behavior: "smooth", block: "center" }));
   await sleep(900);
   await page.click("#engine-panel > summary");
   rec.mark("diagnostics-open");
   const logLines = await count(page, "#engine-log-list .log-row");
-  console.log(`[capture]   engine log rows on camera: ${logLines}`);
+  const open = await page.evaluate(() => document.querySelector("#engine-panel")?.open ?? null);
+  console.log(`[capture]   engine panel open: ${open} · engine log rows on camera: ${logLines}`);
   await sleep(4000);
   await slowScroll(page, await page.evaluate(() => document.documentElement.scrollHeight), 6000); // through the engine log
   rec.mark("log-scrolled");
@@ -299,6 +436,7 @@ const SHOTS = {
   "severity-check": shotSeverityCheck,
   sync: shotSync,
   report: shotReport,
+  qa: shotQa,
   "engine-panel": shotEnginePanel,
 };
 
@@ -317,7 +455,8 @@ const browser = await puppeteer.launch({
   // --enable-features does override it (verified).
   // The window is sized in device pixels so a --dpr 2 capture really yields
   // 2× frames (the screencast cannot exceed the window surface).
-  args: ["--no-first-run", "--no-default-browser-check", "--enable-features=OptimizationHints", `--window-size=${WIDTH * DPR},${(HEIGHT + 80) * DPR}`, `--force-device-scale-factor=${DPR}`],
+  // --plain-chrome leaves that switch out, so the on-device stack stays off (see header).
+  args: ["--no-first-run", "--no-default-browser-check", ...(PLAIN ? [] : ["--enable-features=OptimizationHints"]), `--window-size=${WIDTH * DPR},${(HEIGHT + 80) * DPR}`, `--force-device-scale-factor=${DPR}`],
 });
 const page = await browser.newPage();
 await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: DPR });
@@ -327,7 +466,7 @@ const ctx = { cdp, inSession: false };
 const recorder = new Recorder(cdp, OUT);
 cdp.on("Page.screencastFrame", (p) => void recorder.frame(p).then(() => cdp.send("Page.screencastFrameAck", { sessionId: p.sessionId }).catch(() => {})));
 
-console.log(`[capture] url ${URL_BASE} · viewport ${WIDTH}×${HEIGHT} @${DPR}x · profile ${PROFILE} → ${OUT}`);
+console.log(`[capture] url ${URL_BASE} · viewport ${WIDTH}×${HEIGHT} @${DPR}x · profile ${PROFILE}${PLAIN ? " (plain Chrome: temporary, on-device stack off)" : ""} → ${OUT}`);
 const done = [];
 const failed = [];
 try {
@@ -342,12 +481,14 @@ try {
     } catch (e) {
       failed.push(name);
       console.error(`[capture] shot ${name} FAILED: ${String(e).slice(0, 200)}`);
+      await recorder.abort(); // the screencast must not run on into the next shot
     }
   }
 } finally {
   await browser.close().catch(() => {});
+  if (PLAIN) fs.rmSync(PROFILE, { recursive: true, force: true });
 }
-fs.writeFileSync(path.join(OUT, "session.json"), JSON.stringify({ url: URL_BASE, recordedAt: new Date().toISOString(), viewport: { width: WIDTH, height: HEIGHT, deviceScaleFactor: DPR }, profile: PROFILE, shots: done, failed }, null, 2));
+fs.writeFileSync(path.join(OUT, "session.json"), JSON.stringify({ url: URL_BASE, recordedAt: new Date().toISOString(), viewport: { width: WIDTH, height: HEIGHT, deviceScaleFactor: DPR }, profile: PLAIN ? "temporary (plain Chrome, on-device stack off)" : PROFILE, plainChrome: PLAIN, shots: done, failed }, null, 2));
 console.log(`[capture] ${done.length} shot(s) recorded${failed.length ? `, FAILED: ${failed.join(", ")}` : ""} → ${OUT}`);
 
 if (ASSEMBLE) {
