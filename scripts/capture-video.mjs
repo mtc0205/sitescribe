@@ -19,8 +19,9 @@
  * --final unless the captures came from a hosted https URL).
  *
  * Shots (see SHOTS below): intro, offline-capture, severity-check, sync,
- * report, qa, engine-panel. `--shots all` (default) records everything in order;
- * a shot that fails is reported and skipped, the others still record.
+ * report, engine-panel, qa. `--shots all` (default) records everything in order;
+ * a shot that fails is reported and skipped, the others still record. `qa` (F2) is
+ * not in the film's shot map: it is recorded for its evidence only.
  *
  * Against the hosted URL (https) with a fresh profile the app owns no project:
  * the intro waits for the anonymous sign-in and, when the list is empty, creates
@@ -350,11 +351,33 @@ async function shotSync(page, rec, ctx) {
 }
 
 async function shotReport(page, rec, ctx) {
-  // Into the middle of the viewport, never to the top: the top bar is sticky (61 px), and with
-  // the button scrolled to y = 0 the click hit the bar and nothing happened — which is all the
-  // "report" take of 2026-11-24 shows (measured 2026-11-27, tools/night-2026-11-27).
-  await page.evaluate(() => document.querySelector("#report-btn")?.scrollIntoView({ block: "center" }));
+  // The button just below the sticky top bar — not at y = 0, where the click hit the bar and
+  // nothing happened (all the "report" take of 2026-11-24 shows), and not in the middle of the
+  // viewport, where the answer area below the records fell off the bottom of the frame (the
+  // first hosted take of 2026-11-27). The click is checked against what is really at its centre.
+  const placeButton = () =>
+    page.evaluate(() => {
+      document.querySelector("#report-btn")?.scrollIntoView({ block: "start" });
+      const bar = document.querySelector(".topbar")?.getBoundingClientRect().height ?? 0;
+      window.scrollBy(0, -(bar + 16));
+    });
+  const hitAtCentre = () =>
+    page.evaluate(() => {
+      const b = document.querySelector("#report-btn");
+      if (!b) return { clickable: false, say: "no #report-btn" };
+      const q = b.getBoundingClientRect();
+      const el = document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2);
+      return { clickable: el === b || b.contains(el), say: `button at y ${Math.round(q.top)}–${Math.round(q.bottom)}; at its centre: ${el === b ? "the button" : (el?.className ?? el?.tagName ?? "nothing")}` };
+    });
+  await placeButton();
   await sleep(600);
+  let hit = await hitAtCentre();
+  if (!hit.clickable) {
+    await page.evaluate(() => document.querySelector("#report-btn")?.scrollIntoView({ block: "center" }));
+    await sleep(600);
+    hit = await hitAtCentre();
+  }
+  console.log(`[capture]   report button: ${hit.say}${hit.clickable ? "" : " — NOT clickable"}`);
   await rec.start();
   await sleep(1200);
   rec.mark("report-click");
@@ -370,9 +393,13 @@ async function shotReport(page, rec, ctx) {
   rec.mark("report-result");
   const badge = await text(page, "#report-out .ai-head .chip");
   console.log(`[capture]   report badge: ${badge}${badge ? "" : ` · error block: ${(await text(page, "#report-out .ai-block.error"))?.slice(0, 160) ?? "none"}`}`);
+  await sleep(1000);
+  // What the app answered is the point of this shot: bring it into the middle of the frame at
+  // once. (Until 2026-11-27 the view stayed where it was for 8 s, and the answer sat below the
+  // frame while the narration talked about it.)
+  await page.evaluate(() => document.querySelector("#report-out")?.scrollIntoView({ block: "center", behavior: "smooth" }));
   await sleep(8000); // "Now the heavy lifting — drafting today's inspection report …"
   const ev = await evidence(page, { reportBadge: badge });
-  await page.evaluate(() => document.querySelector("#report-out")?.scrollIntoView({ block: "start", behavior: "smooth" }));
   await sleep(6000);
   await rec.stop({ shot: "report", narration: "beat-6-report-drafting-cloud-engine-1.mp3", evidence: ev });
 }
@@ -381,8 +408,15 @@ const NOTE_QA = "What does efflorescence usually indicate?";
 
 /** F2, field Q&A. Not in the shot ↔ narration map (the storyboard has no line for it), so the
  *  assembler does not use it; it is recorded for the evidence: whatever answered the question —
- *  a model, or the honest "no engine" state — is quoted in this shot's manifest. */
+ *  a model, or the honest "no engine" state — is quoted in this shot's manifest. It runs last,
+ *  after the engine-panel shot has gone back to the home screen, so that its engine-log row is
+ *  not on camera in that shot. */
 async function shotQa(page, rec, ctx) {
+  if (!(await page.$("#qa-input"))) {
+    await page.click("#project-list .card");
+    await waitFor(page, "#qa-input");
+    await sleep(800);
+  }
   await page.evaluate(() => document.querySelector("#qa-input")?.scrollIntoView({ block: "center" }));
   await sleep(600);
   await rec.start();
@@ -436,8 +470,8 @@ const SHOTS = {
   "severity-check": shotSeverityCheck,
   sync: shotSync,
   report: shotReport,
-  qa: shotQa,
   "engine-panel": shotEnginePanel,
+  qa: shotQa, // last: see shotQa
 };
 
 /* ---------- main ---------- */
