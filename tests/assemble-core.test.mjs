@@ -20,6 +20,12 @@ import {
   peakOf,
   assTime,
   buildAss,
+  captionText,
+  cutinList,
+  cutinStillAt,
+  cloudBadgeOnCamera,
+  onDeviceBadgeOnCamera,
+  narrationMarkProblems,
   pearson,
   speechBounds,
   fmtSec,
@@ -353,4 +359,74 @@ test("fmtSec", () => {
   assert.equal(fmtSec(0), "0:00.0");
   assert.equal(fmtSec(144_150), "2:24.2");
   assert.equal(fmtSec(61_000), "1:01.0");
+});
+
+/* ---------- 2026-11-27: caption text, credits, cut-in sequences, narration ↔ footage ---------- */
+
+test("captionText: markdown emphasis and code marks are neither shown nor weighed", () => {
+  assert.equal(captionText("**Nothing leaves the device.** For infrastructure data."), "Nothing leaves the device. For infrastructure data.");
+  assert.equal(captionText("it reads `inferenceSource` straight"), "it reads inferenceSource straight");
+  assert.equal(captionText("2 * 3 = 6 and a_b"), "2 * 3 = 6 and a_b"); // single markers are left alone
+  assert.equal(captionText(null), "");
+  const t = buildTimeline([{ shot: "s", vo: ["a"] }], { a: 4_000 }, { leadMs: 0, gapMs: 0, tailMs: 0 });
+  t.segments[0].text = "**Nothing leaves the device.** For infrastructure data.";
+  assert.equal(captionEvents(t).map((c) => c.text.replace(/\\N/g, " ")).join(" "), "Nothing leaves the device. For infrastructure data.");
+});
+
+test("buildAss: a credit is burnt in for exactly its own time, top-right, over several lines", () => {
+  const ass = buildAss({ captions: [{ startMs: 0, endMs: 1, text: "x" }], totalMs: 20_000, label: "", credits: [{ startMs: 600, endMs: 14_100, text: "Photo by A\\NCC BY 3.0" }] });
+  assert.match(ass, /Style: Credit,Segoe UI,22,/);
+  assert.match(ass, /,9,30,36,26,1/); // alignment 9 = top-right, opposite the corner label
+  assert.match(ass, /Dialogue: 0,0:00:00.60,0:00:14.10,Credit,,0,0,0,,Photo by A\\NCC BY 3\.0/);
+  assert.doesNotMatch(buildAss({ captions: [], totalMs: 1, label: "" }), /Credit,,/); // no credit given: the file is what it was
+});
+
+test("cutinStillAt: one entry behaves as before; a list takes over in order; a missing still is skipped", () => {
+  const all = () => true;
+  const one = { at: 0.5, name: "repo" };
+  assert.equal(cutinStillAt(one, 0, 100, all), null);
+  assert.equal(cutinStillAt(one, 49, 100, all), null);
+  assert.equal(cutinStillAt(one, 50, 100, all), "repo");
+  assert.equal(cutinStillAt(one, 99, 100, all), "repo");
+  const seq = [{ at: 0.5, name: "repo" }, { at: 0.8, name: "repo-readme" }];
+  assert.equal(cutinStillAt(seq, 60, 100, all), "repo");
+  assert.equal(cutinStillAt(seq, 79, 100, all), "repo");
+  assert.equal(cutinStillAt(seq, 80, 100, all), "repo-readme");
+  assert.equal(cutinStillAt(seq, 90, 100, (n) => n === "repo"), "repo"); // no README still: the repo view stays on
+  assert.equal(cutinStillAt(seq, 70, 100, (n) => n === "repo-readme"), null); // no repo still: footage until the README starts
+  assert.equal(cutinStillAt(seq, 85, 100, (n) => n === "repo-readme"), "repo-readme");
+  assert.equal(cutinStillAt(null, 50, 100, all), null);
+  assert.deepEqual(cutinList(null), []);
+  assert.deepEqual(cutinList(one), [one]);
+  assert.deepEqual(cutinList(seq), seq);
+  assert.equal(cutinStillAt([{ at: 0.8, name: "b" }, { at: 0.5, name: "a" }], 60, 100, all), "a"); // by position, not by the order written
+});
+
+test("narrationMarkProblems: the words must match the badge the capture quoted from the screen", () => {
+  const ruleBased = { captureBadge: "⚙ Rule-based fallback (no AI engine reachable)", newestRecord: { engine: "⚙ rule-based" }, statusChips: ["✕ offline", "⚙ Rule-based fallback", "firebase live"] };
+  const onDevice = { captureBadge: "⚡ On-device · Gemini Nano", newestRecord: { engine: "⚡ on-device" }, statusChips: ["✕ offline", "⚡ On-device · Gemini Nano", "firebase live"] };
+  const saysOnDevice = [{ id: "beat-2", mark: "required" }];
+  const writtenForRules = [{ id: "planb-beat-2", mark: "absent" }];
+  const either = [{ id: "planb-beat-6", mark: "either" }];
+  // "on-device" said over rule-based footage — the mismatch of 2026-11-27
+  assert.match(narrationMarkProblems("offline-capture", ruleBased, saysOnDevice).join("\n"), /"beat-2" is true only with an on-device badge on camera, and none is/);
+  assert.deepEqual(narrationMarkProblems("offline-capture", onDevice, saysOnDevice), []);
+  assert.deepEqual(narrationMarkProblems("offline-capture", ruleBased, writtenForRules), []);
+  // the rule-based wording over a Nano badge
+  assert.match(narrationMarkProblems("offline-capture", onDevice, writtenForRules).join("\n"), /"planb-beat-2" is written for footage without an on-device badge, and one is on camera/);
+  assert.deepEqual(narrationMarkProblems("report", ruleBased, either), []);
+  assert.deepEqual(narrationMarkProblems("report", ruleBased, [{ id: "x", mark: null }]), []);
+  // "on-device optional" and "On-device model unavailable" are not an on-device badge
+  assert.equal(onDeviceBadgeOnCamera({ captureBadge: null, statusChips: ["☁ Cloud engine · on-device optional"] }), false);
+  assert.equal(onDeviceBadgeOnCamera({ captureBadge: null, statusChips: ["⚙ On-device model unavailable"] }), false);
+  assert.equal(onDeviceBadgeOnCamera({ severityCheck: "⚙ Rule-based fallback (no AI engine reachable)Exposed reinforcement…" }), false);
+  assert.equal(onDeviceBadgeOnCamera(null), false);
+  assert.equal(onDeviceBadgeOnCamera({ qaBadge: "⚡ On-device · Gemini Nano" }), true);
+  // a line that presumes the cloud does not play over a shot where the cloud call was refused
+  const refused = { captureBadge: "⚙ Rule-based fallback (no AI engine reachable)", newestRecord: { engine: "⚙ rule-based" }, reportBadge: null, reportError: "Report drafting failed: AI: Error fetching … [429 ] You exceeded your current quota", statusChips: ["⇅ online", "⚙ Rule-based fallback", "firebase live"] };
+  const needsCloud = [{ id: "beat-6", mark: "cloud-required" }];
+  assert.match(narrationMarkProblems("report", refused, needsCloud).join("\n"), /"beat-6" is true only with a cloud badge on camera, and none is/);
+  assert.deepEqual(narrationMarkProblems("report", { ...refused, reportBadge: "☁ Cloud · Gemini" }, needsCloud), []);
+  assert.deepEqual(narrationMarkProblems("offline-capture", { ...refused, captureBadge: "☁ Fell back to cloud · Gemini", statusChips: ["☁ Fell back to cloud"] }, needsCloud), []);
+  assert.equal(cloudBadgeOnCamera({ statusChips: ["☁ Cloud engine · on-device optional"] }), false); // "engine on duty", not an answer
 });

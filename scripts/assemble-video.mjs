@@ -29,6 +29,11 @@
  *     cold open + GitHub URL are real: the final film comes from the hosted URL.
  *   - A missing shot is an error, never black frames. --allow-missing skips it
  *     and says so. Without a bridge photo the cold open is a plain title card.
+ *   - Narration is checked against the footage: a line the script marks as true
+ *     only with an on-device badge on camera does not play over rule-based
+ *     footage, nor does a rule-based line over on-device footage (noticed in
+ *     every render, refused with --final).
+ *   - A still is shown only with its attribution: --credit, else no --final.
  *
  * Options
  *   --session <dir>   capture session (one sub-directory per shot; default ../tools/video-test)
@@ -36,8 +41,10 @@
  *   --script <md>     default ../submission/VIDEO-SCRIPT-EN.md
  *   --vo <dir>        default ../submission/vo
  *   --ffmpeg <path>   default: $FFMPEG, PATH, then imageio-ffmpeg's bundled binary
- *   --still <name>=<image>   a still for a shot ("cold-open") or a cut-in ("repo")
+ *   --still <name>=<image>   a still for a shot ("cold-open") or a cut-in ("repo", "repo-readme")
  *   --fallback        the ⚠FB no-Nano cut (swaps one narration line)
+ *   --cut <name>      a named cut of the script's "cuts" map (plan-b, plan-b-nano)
+ *   --credit "<text>" the attribution of the still on camera, burnt in while it shows ("\n" = new line)
  *   --only a,b        restrict to these shots (quick pipeline tests)
  *   --fps 30 --size 1920x1080 --preset medium --crf 18
  *   --max-stretch 3 --lead 0.6 --gap 0.35 --tail 1.2      (seconds)
@@ -52,7 +59,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parseNarration, parseShotMap, checkShotMap } from "./lib/script-vo.mjs";
-import { sampleFrames, captureSpan, playbackSpeed, resolveBeats, buildTimeline, captionEvents, buildAss, overlayClip, peakOf, pearson, speechBounds, fmtSec } from "./lib/assemble-core.mjs";
+import { sampleFrames, captureSpan, playbackSpeed, resolveBeats, buildTimeline, captionEvents, buildAss, assText, overlayClip, peakOf, pearson, speechBounds, fmtSec, cutinList, cutinStillAt, narrationMarkProblems } from "./lib/assemble-core.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
@@ -69,6 +76,13 @@ const VO_DIR = path.resolve(ROOT, opt("vo", path.join("..", "submission", "vo"))
 const OUT = path.resolve(ROOT, opt("out", path.join(path.dirname(SESSION), `${path.basename(SESSION)}.TEST-RENDER.mp4`)));
 const FINAL = has("--final");
 const FALLBACK = has("--fallback");
+// --cut <name>: a named cut of the script's "cuts" map (e.g. plan-b): the lines it lists replace
+// their main lines. --fallback is the older, single-line no-Nano cut; the two exclude each other.
+const CUT_NAME = opt("cut", "");
+if (FALLBACK && CUT_NAME) die("--fallback and --cut <name> select two different cuts — pass one of them");
+// --credit "<text>": the attribution of a still on camera, burnt in while the still is shown
+// ("\n" in the text starts a line). --final is refused when a still is shown without it.
+const CREDIT = opt("credit", "");
 const ALLOW_MISSING = has("--allow-missing");
 const ONLY = opt("only", "").split(",").filter(Boolean);
 const FPS = Number(opt("fps", "30"));
@@ -237,7 +251,21 @@ if (!map) die(`no shot ↔ narration map (a \`\`\`json block with "shots") in ${
 const mapProblems = checkShotMap(map, narration);
 if (mapProblems.length) die(`the shot ↔ narration map disagrees with the narration:\n  - ${mapProblems.join("\n  - ")}`);
 const TEXT = Object.fromEntries(narration.map((s) => [s.id, s.text]));
-log(`[assemble] ${clock()} script: ${narration.length} narration lines, ${map.shots.length} shots · cut: ${FALLBACK ? "⚠FB (no Nano)" : "main"}`);
+const SEGMENT = Object.fromEntries(narration.map((s) => [s.id, s]));
+// The lines this cut swaps in: { main narration id: alternate id }.
+let CUT_MAP = {};
+if (FALLBACK) CUT_MAP = map.alternates ?? {};
+else if (CUT_NAME) {
+  if (!map.cuts?.[CUT_NAME]) die(`the script has no cut "${CUT_NAME}" (its cuts: ${Object.keys(map.cuts ?? {}).join(", ") || "none"})`);
+  CUT_MAP = map.cuts[CUT_NAME];
+}
+const alias = (id) => CUT_MAP[id] || id;
+const CUT_LABEL = FALLBACK ? "⚠FB (no Nano)" : CUT_NAME ? `cut "${CUT_NAME}"` : "main";
+// Per line: whether its words are true only with a badge on camera — "required" (an on-device
+// badge), "absent" (written for footage without one), "either", or "cloud-required" (true only
+// with a cloud badge): the script's onDeviceBadge / cloudBadge maps, else the mark on a ⚠PLAN-B line.
+const markOf = (id) => (map.cloudBadge?.[id] === "required" ? "cloud-required" : map.onDeviceBadge?.[id] ?? SEGMENT[id]?.onDeviceBadge ?? null);
+log(`[assemble] ${clock()} script: ${narration.length} narration lines, ${map.shots.length} shots · cut: ${CUT_LABEL}${Object.keys(CUT_MAP).length ? ` (${Object.entries(CUT_MAP).map(([a, b]) => `${a} → ${b}`).join("; ")})` : ""}`);
 
 /* ---------- 2. footage ---------- */
 
@@ -246,7 +274,7 @@ const plan = [];
 const captures = [];
 for (const s of map.shots) {
   if (ONLY.length && !ONLY.includes(s.shot)) continue;
-  const vo = s.vo.map((id) => (FALLBACK && map.alternates?.[id]) || id);
+  const vo = s.vo.map(alias);
   const dir = path.join(SESSION, s.shot);
   const manifest = path.join(dir, "manifest.json");
   const cutin = map.cutins?.[s.shot] ?? null;
@@ -307,7 +335,7 @@ for (const seg of timeline.segments) seg.text = TEXT[seg.id];
 for (const [i, s] of timeline.shots.entries()) {
   const p = plan[i];
   if (p.source !== "capture") continue;
-  const alias = (id) => (FALLBACK && map.alternates?.[id]) || id; // the ⚠FB cut renames one line
+  const alias = (id) => CUT_MAP[id] || id; // the cut renames the lines it swaps
   const spec = (map.beats?.[s.shot] ?? []).map((b) => ({ ...b, ...(b.at ? { at: alias(b.at) } : {}), ...(b.into ? { into: alias(b.into) } : {}) }));
   if (!spec.length) continue;
   const { anchors, notes } = resolveBeats(spec, p.marks, timeline.segments, s.startMs, s.durationMs, captureSpan(p.frames));
@@ -341,19 +369,31 @@ if (timeline.totalMs > 180_000) notices.push(`OVER 3:00 — the film is ${fmtSec
 
 // What was really on screen (quoted by the harness from the DOM) — echoed, never invented.
 const badges = [];
-for (const p of plan) {
+for (const [i, p] of plan.entries()) {
   const ev = p.evidence;
   if (!ev) continue;
-  const onScreen = [ev.captureBadge, ev.newestRecord?.engine, ev.reportBadge].filter(Boolean);
+  const onScreen = [ev.captureBadge, ev.newestRecord?.engine, ev.reportBadge, ev.severityCheck, ev.qaBadge].filter(Boolean);
   badges.push(...onScreen);
-  log(`  on camera in ${p.shot}: status [${(ev.statusChips ?? []).join("] [")}] · capture badge "${ev.captureBadge ?? "—"}" · newest record ${ev.newestRecord ? `${ev.newestRecord.engine} / ${ev.newestRecord.sync} / ${ev.newestRecord.time}` : "—"}`);
+  log(`  on camera in ${p.shot}: status [${(ev.statusChips ?? []).join("] [")}] · capture badge "${ev.captureBadge ?? "—"}" · newest record ${ev.newestRecord ? `${ev.newestRecord.engine} / ${ev.newestRecord.sync} / ${ev.newestRecord.time}` : "—"}${ev.reportBadge ? ` · report badge "${ev.reportBadge}"` : ""}${ev.reportError ? ` · report ERROR BLOCK "${String(ev.reportError).slice(0, 140)}…"` : ""}${ev.severityCheck ? ` · severity check "${String(ev.severityCheck).slice(0, 90)}…"` : ""}`);
+}
+// Narration ↔ footage: a line marked "on-device badge required" must not play over rule-based
+// footage, and a line written for the rule-based state must not play over on-device footage.
+const contradictions = [];
+for (const [i, p] of plan.entries()) {
+  if (p.source !== "capture" || !p.evidence) continue;
+  const lines = timeline.shots[i].vo.map((v) => ({ id: v.id, mark: markOf(v.id) })).filter((l) => l.mark);
+  for (const problem of narrationMarkProblems(p.shot, p.evidence, lines)) {
+    contradictions.push(`${p.shot}: ${problem}`);
+    notices.push(`NARRATION ↔ FOOTAGE — ${p.shot}: ${problem}`);
+  }
 }
 const simulated = badges.filter((b) => /simulated/i.test(b));
 const ruleBased = badges.filter((b) => /rule-based/i.test(b));
 
 const hosted = captures.length > 0 && captures.every((m) => /^https:\/\//.test(m.url ?? "") && !/localhost|127\.0\.0\.1/.test(m.url ?? ""));
 const sources = [...new Set(captures.map((m) => m.url ?? "(url not recorded)"))].join(", ") || "no captures";
-const missingCutins = plan.filter((p) => p.cutin && !(STILLS[p.cutin.name] && fs.existsSync(STILLS[p.cutin.name]))).map((p) => `${p.shot}→"${p.cutin.name}"`);
+const stillGiven = (name) => !!(STILLS[name] && fs.existsSync(STILLS[name]));
+const missingCutins = plan.flatMap((p) => cutinList(p.cutin).filter((c) => !stillGiven(c.name)).map((c) => `${p.shot}→"${c.name}"`));
 
 if (FINAL) {
   const why = [];
@@ -363,11 +403,13 @@ if (FINAL) {
   if (!GITHUB) why.push("--github-url <url> is required for the end card");
   if (missingCutins.length) why.push(`cut-in stills missing: ${missingCutins.join(", ")}`);
   if (simulated.length) why.push(`simulated badges are on camera: ${simulated.join(" | ")} — the final film needs real engines`);
+  if (plan.some((p) => p.source === "still") && !CREDIT) why.push("a still is on camera without --credit — its licence needs the attribution on screen (wording: tools/video-stills/SOURCES.md)");
+  if (contradictions.length) why.push(`narration contradicts the footage:\n    - ${contradictions.join("\n    - ")}`);
   if (why.length) die(`refusing --final — the final film must be complete and shot on the hosted URL:\n  - ${why.join("\n  - ")}`);
 }
 if (ruleBased.length && !FINAL) notices.push(`rule-based fallback is on camera (${ruleBased.length} badge${ruleBased.length === 1 ? "" : "s"}) — honest, but not what the final film should show`);
 const LABEL = FINAL ? "" : `TEST RENDER — not the final video · captured from ${sources}`;
-fs.writeFileSync(`${OUT}.plan.json`, JSON.stringify({ generatedAt: new Date().toISOString(), session: SESSION, script: SCRIPT, out: OUT, final: FINAL, label: LABEL, notices, fps: FPS, size: [W, H], shots: timeline.shots.map((s, i) => ({ ...s, source: plan[i].source, url: plan[i].url ?? null, anchors: (plan[i].anchors ?? []).map((a) => ({ mark: a.mark, atMs: Math.round(s.startMs + a.out) })), evidence: plan[i].evidence ?? null })), segments: timeline.segments.map((s) => ({ ...s, text: TEXT[s.id], speech: { onsetMs: vo[s.id].onsetMs, offsetMs: vo[s.id].offsetMs } })), totalFrames: timeline.totalFrames, totalMs: timeline.totalMs }, null, 2));
+fs.writeFileSync(`${OUT}.plan.json`, JSON.stringify({ generatedAt: new Date().toISOString(), session: SESSION, script: SCRIPT, out: OUT, final: FINAL, cut: CUT_LABEL, swapped: CUT_MAP, label: LABEL, credit: CREDIT || null, notices, narrationContradictions: contradictions, fps: FPS, size: [W, H], shots: timeline.shots.map((s, i) => ({ ...s, source: plan[i].source, url: plan[i].url ?? null, anchors: (plan[i].anchors ?? []).map((a) => ({ mark: a.mark, atMs: Math.round(s.startMs + a.out) })), evidence: plan[i].evidence ?? null })), segments: timeline.segments.map((s) => ({ ...s, text: TEXT[s.id], onDeviceBadge: markOf(s.id), speech: { onsetMs: vo[s.id].onsetMs, offsetMs: vo[s.id].offsetMs } })), totalFrames: timeline.totalFrames, totalMs: timeline.totalMs }, null, 2));
 log(`\n[assemble] plan written → ${OUT}.plan.json`);
 for (const n of notices) log(`[assemble] note: ${n}`);
 if (has("--plan")) process.exit(0);
@@ -391,7 +433,10 @@ const normalized = new Map();
 function normalizeStill(file) {
   if (normalized.has(file)) return normalized.get(file);
   const out = path.join(tmp, `still-${normalized.size}.jpg`);
-  const fit = `scale=${fw}:${fh}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${fw}:${fh}:(ow-iw)/2:(oh-ih)/2:color=0x10141a,setsar=1`;
+  // Fill the frame: scale to cover it, then crop to it, centred. (Until 2026-11-27 a still of
+  // another aspect ratio was padded with bars — although the attribution every still of
+  // tools/video-stills/SOURCES.md carries says "cropped and scaled for this video".)
+  const fit = `scale=${fw}:${fh}:force_original_aspect_ratio=increase:flags=lanczos,crop=${fw}:${fh},setsar=1`;
   const r = ff(["-v", "error", "-y", "-i", file, "-vf", fit, "-frames:v", "1", "-q:v", "2", out]);
   if (r.status !== 0) die(`could not read still ${file}: ${r.stderr.slice(-300)}`);
   normalized.set(file, out);
@@ -412,13 +457,23 @@ for (const [i, s] of timeline.shots.entries()) {
     files = new Array(s.nFrames).fill(one);
   }
   if (p.cutin) {
-    if (STILLS[p.cutin.name] && fs.existsSync(STILLS[p.cutin.name])) {
-      const still = normalizeStill(STILLS[p.cutin.name]);
-      const from = Math.min(s.nFrames - 1, Math.max(0, Math.round(p.cutin.at * s.nFrames)));
-      for (let k = from; k < s.nFrames; k++) files[k] = still;
-      log(`[assemble] cut-in "${p.cutin.name}" in ${s.shot} from ${fmtSec(s.startMs + (from / s.nFrames) * s.durationMs)}`);
-    } else if (!FINAL) {
-      log(`[assemble] note: no --still ${p.cutin.name}=<image> for the cut-in in ${s.shot} — staying on the captured footage`);
+    // One still or a sequence of them: each entry takes over at its `at` fraction of the shot.
+    const stillCache = new Map();
+    const stillOf = (name) => {
+      if (!stillCache.has(name)) stillCache.set(name, normalizeStill(STILLS[name]));
+      return stillCache.get(name);
+    };
+    const missing = cutinList(p.cutin).filter((c) => !stillGiven(c.name));
+    if (missing.length && !FINAL) log(`[assemble] note: no --still for cut-in ${missing.map((c) => `${c.name}=<image>`).join(", ")} in ${s.shot} — the view before it stays on`);
+    let showing = null;
+    for (let k = 0; k < s.nFrames; k++) {
+      const name = cutinStillAt(p.cutin, k, s.nFrames, stillGiven);
+      if (!name) continue; // the captured footage, until the first cut-in that has a still
+      files[k] = stillOf(name);
+      if (name !== showing) {
+        log(`[assemble] cut-in "${name}" in ${s.shot} from ${fmtSec(s.startMs + (k / s.nFrames) * s.durationMs)}`);
+        showing = name;
+      }
     }
   }
   sequence.push(...files);
@@ -439,8 +494,12 @@ for (let i = 0; i < sequence.length; i++) {
 log(`[assemble] ${clock()} ${sequence.length} frames queued (${linked} hard links, ${sequence.length - linked} copies) · distinct captured frames used: ${new Set(sequence).size}`);
 
 const captions = captionEvents(timeline);
-fs.writeFileSync(path.join(tmp, "subs.ass"), buildAss({ captions, totalMs: timeline.totalMs, label: LABEL, playResX: W, playResY: H }));
-log(`[assemble] subtitles: ${captions.length} caption events from ${timeline.segments.length} narration lines${LABEL ? " · corner label ON" : " · corner label OFF (--final)"}`);
+// The attribution of a still is on screen for exactly as long as the still is.
+const credits = CREDIT
+  ? timeline.shots.flatMap((s, i) => (plan[i].source === "still" ? [{ startMs: s.startMs, endMs: s.startMs + s.durationMs, text: CREDIT.split(/\\n|\r?\n/).map(assText).join("\\N") }] : []))
+  : [];
+fs.writeFileSync(path.join(tmp, "subs.ass"), buildAss({ captions, credits, totalMs: timeline.totalMs, label: LABEL, playResX: W, playResY: H }));
+log(`[assemble] subtitles: ${captions.length} caption events from ${timeline.segments.length} narration lines${LABEL ? " · corner label ON" : " · corner label OFF (--final)"}${credits.length ? ` · credit line burnt in for ${fmtSec(credits[0].endMs - credits[0].startMs)} (${credits[0].text.split("\\N").length} lines)` : ""}`);
 
 /* ---------- 6. narration mix + encode ---------- */
 
