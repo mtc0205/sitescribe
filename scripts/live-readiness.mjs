@@ -11,9 +11,11 @@
  *       not enabled (it says which)
  *   (d) Gemini through AI Logic with the real SDK: the App Check debug token
  *       exchanged exactly as the SDK's debug provider does, then one
- *       generateContent — OK / FREE_TIER_UNAVAILABLE / GENAI_CONFIG_NOT_FOUND /
- *       APP_CHECK / NETWORK / OTHER
+ *       generateContent — OK / FREE_TIER_UNAVAILABLE / FREE_TIER_QUOTA /
+ *       GENAI_CONFIG_NOT_FOUND / APP_CHECK / NETWORK / OTHER
  * then a two-line verdict that names the user step that is still missing.
+ * Each run makes ONE generateContent request, and the free tier allows 20 a day:
+ * after a refill, do not spend them on probes before a recording.
  *
  * Exit 0 only when every check is green; 1 when something is red; 2 when there
  * is no .env to check. (c) signs up one anonymous user when it succeeds — the
