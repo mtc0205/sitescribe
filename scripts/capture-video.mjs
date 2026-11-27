@@ -23,6 +23,13 @@
  * a shot that fails is reported and skipped, the others still record. `qa` (F2) is
  * not in the film's shot map: it is recorded for its evidence only.
  *
+ * Request ledger (2026-11-28): every request the page sends to Google's APIs is
+ * recorded with its HTTP outcome — in each shot's manifest.json (`requests`) and in
+ * session.json — and the run ends with a count of the generateContent requests
+ * Google's server answered, which is what the free tier counts. No query string
+ * (it carries the API key) and no header is ever written. A HTTP 429 is said out
+ * loud: it means the day's free requests are spent.
+ *
  * Against the hosted URL (https) with a fresh profile the app owns no project:
  * the intro waits for the anonymous sign-in and, when the list is empty, creates
  * one through the UI — ＋ New and its two prompt() dialogs, as a visitor would —
@@ -141,7 +148,9 @@ class Recorder {
       frames: this.frames,
       marks: this.marks,
       evidence: meta.evidence ?? null,
-      note: "Frames captured via CDP Page.startScreencast (everyFrame:true); ts is the CDP frame timestamp in SECONDS and the rate is variable. Cut with scripts/assemble-video.mjs. 'evidence' quotes the engine/sync badges that were on screen (never invented).",
+      // The requests to Google's APIs this shot sent (see the request ledger above).
+      requests: ledger.rows.filter((r) => r.shot === (meta.shot ?? "unnamed")),
+      note: "Frames captured via CDP Page.startScreencast (everyFrame:true); ts is the CDP frame timestamp in SECONDS and the rate is variable. Cut with scripts/assemble-video.mjs. 'evidence' quotes the engine/sync badges that were on screen (never invented). 'requests' lists what the page sent to Google's APIs during the shot (no query strings, no headers).",
     };
     fs.writeFileSync(path.join(this.dir, "manifest.json"), JSON.stringify(manifest, null, 2));
     console.log(`[capture] ${meta.shot ?? "unnamed"}: ${this.frames.length} frames → ${this.dir}`);
@@ -165,6 +174,80 @@ class Recorder {
     this.n++;
     this.frames.push({ file, ts: metadata?.timestamp ?? Date.now() });
   }
+}
+
+/* ---------- request ledger ---------- */
+
+/**
+ * Every request the page sends to Google's APIs while the harness runs, with what came
+ * back. The Gemini free tier counts requests — answered or refused alike — so every one
+ * of them is counted here, shot by shot. (The hosted takes of 2026-11-27 could only say
+ * "about 4–5": nothing had recorded what the browser really sent.)
+ *
+ * Nothing secret is written. The query string — it carries the API key — and every
+ * header (App Check token, ID token) are left out. What is recorded is the host and path,
+ * the HTTP status, why a request got no answer at all, and — for a generateContent that
+ * was refused — the server's own sentence, as the UI quotes it.
+ */
+const GOOGLE_API = /(^|\.)googleapis\.com$/i;
+function requestKind(host, pathname) {
+  if (host === "firebasevertexai.googleapis.com") return /:generateContent$/.test(pathname) ? "generateContent" : "ai-logic";
+  return (
+    {
+      "firestore.googleapis.com": "firestore",
+      "identitytoolkit.googleapis.com": "auth",
+      "firebaseappcheck.googleapis.com": "app-check",
+      "firebaseremoteconfig.googleapis.com": "remote-config",
+    }[host] ?? "google-api"
+  );
+}
+const ledger = { shot: "(before the first shot)", rows: [], byId: new Map() };
+
+function attachLedger(cdp) {
+  const byId = ledger.byId;
+  cdp.on("Network.requestWillBeSent", (e) => {
+    let u;
+    try {
+      u = new URL(e.request.url);
+    } catch {
+      return;
+    }
+    if (!GOOGLE_API.test(u.hostname)) return;
+    const row = { at: new Date().toISOString(), shot: ledger.shot, method: e.request.method, kind: requestKind(u.hostname, u.pathname), url: `${u.hostname}${u.pathname}`, status: null, refused: null, noAnswer: null };
+    ledger.rows.push(row);
+    byId.set(e.requestId, row);
+  });
+  cdp.on("Network.responseReceived", (e) => {
+    const r = byId.get(e.requestId);
+    if (r) r.status = e.response.status;
+  });
+  cdp.on("Network.loadingFailed", (e) => {
+    const r = byId.get(e.requestId);
+    if (r) r.noAnswer = e.errorText;
+  });
+  // (A listener that throws would end the whole session, so nothing in here may: every
+  // step is guarded.)
+  cdp.on("Network.loadingFinished", (e) => {
+    const r = byId.get(e.requestId);
+    if (!r || r.kind !== "generateContent" || !(r.status >= 400)) return;
+    cdp
+      .send("Network.getResponseBody", { requestId: e.requestId })
+      .then((b) => {
+        if (typeof b?.body !== "string") return;
+        try {
+          r.refused = JSON.parse(b.body)?.error?.message ?? b.body.slice(0, 300);
+        } catch {
+          r.refused = b.body.slice(0, 300);
+        }
+      })
+      .catch(() => {});
+  });
+}
+
+/** The Gemini requests of a capture: counted as spent when Google's server answered them. */
+function geminiRequests(rows) {
+  const all = rows.filter((r) => r.kind === "generateContent");
+  return { all, answered: all.filter((r) => r.status != null), unanswered: all.filter((r) => r.status == null) };
 }
 
 /* ---------- storyboard shots ---------- */
@@ -495,6 +578,10 @@ const browser = await puppeteer.launch({
 const page = await browser.newPage();
 await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: DPR });
 const cdp = await page.createCDPSession();
+// The request ledger hears every request from the first navigation on (the shots that
+// emulate the network call Network.enable again themselves).
+await cdp.send("Network.enable");
+attachLedger(cdp);
 const ctx = { cdp, inSession: false };
 
 const recorder = new Recorder(cdp, OUT);
@@ -508,6 +595,7 @@ try {
     if (WANTED && !WANTED.includes(name)) continue;
     console.log(`[capture] shot ${name} …`);
     recorder.dir = path.join(OUT, name);
+    ledger.shot = name;
     // A failed shot must not cost the others their footage.
     try {
       await fn(page, recorder, ctx);
@@ -522,8 +610,15 @@ try {
   await browser.close().catch(() => {});
   if (PLAIN) fs.rmSync(PROFILE, { recursive: true, force: true });
 }
-fs.writeFileSync(path.join(OUT, "session.json"), JSON.stringify({ url: URL_BASE, recordedAt: new Date().toISOString(), viewport: { width: WIDTH, height: HEIGHT, deviceScaleFactor: DPR }, profile: PLAIN ? "temporary (plain Chrome, on-device stack off)" : PROFILE, plainChrome: PLAIN, shots: done, failed }, null, 2));
+fs.writeFileSync(path.join(OUT, "session.json"), JSON.stringify({ url: URL_BASE, recordedAt: new Date().toISOString(), viewport: { width: WIDTH, height: HEIGHT, deviceScaleFactor: DPR }, profile: PLAIN ? "temporary (plain Chrome, on-device stack off)" : PROFILE, plainChrome: PLAIN, shots: done, failed, requests: ledger.rows }, null, 2));
 console.log(`[capture] ${done.length} shot(s) recorded${failed.length ? `, FAILED: ${failed.join(", ")}` : ""} → ${OUT}`);
+
+// The request ledger, said out loud: a Gemini request that Google's server answered is
+// spent, whatever it answered. A 429 means the day's free requests are gone.
+const gemini = geminiRequests(ledger.rows);
+console.log(`[capture] request ledger: ${ledger.rows.length} request(s) to Google's APIs · generateContent ${gemini.all.length} — ${gemini.answered.length} answered by the server (spent), ${gemini.unanswered.length} with no answer (not counted)`);
+for (const r of gemini.all) console.log(`[capture]   ${r.at}  ${r.shot}: ${r.status == null ? `no answer (${r.noAnswer ?? "still pending"})` : `HTTP ${r.status}`}${r.refused ? ` — ${r.refused.slice(0, 140)}` : ""}`);
+if (gemini.answered.some((r) => r.status === 429)) console.log("[capture] HTTP 429 — today's free-tier requests are spent: no more cloud runs until the window refills");
 
 if (ASSEMBLE) {
   const pass = ["--final", "--github-url", "--still", "--fallback", "--preset"].flatMap((f) => {
