@@ -36,6 +36,12 @@
  * before the recorder starts (off camera). The ?engine=off switch is a demo-mode
  * flag, so a hosted run opens the plain URL.
  *
+ * --fresh-project: on a hosted run, create a new project through ＋ New even when
+ * the profile already owns one (a re-shoot on the shared on-device profile, which
+ * remembers its anonymous user and its project), and wait until it is the first
+ * card of the list, empty. The intro's manifest quotes the card it opened
+ * (`evidence.projectOpened`).
+ *
  * --plain-chrome: a throw-away profile and WITHOUT the on-device stack (puppeteer's
  * default --disable-features list keeps it off; this script re-enables it only for
  * the on-device profile). Use it for a run that must not load or download Gemini
@@ -80,6 +86,11 @@ const PROFILE = PLAIN
 // What ＋ New asks for on a hosted run that owns no project yet (name, then structure type).
 const PROJECT_NAME = opt("project-name", "Girder Bridge No.3 — Qiantang tributary");
 const PROJECT_TYPE = opt("project-type", "bridge");
+// --fresh-project: on a hosted run, create a new project through ＋ New even when the profile
+// already owns one. A re-shoot on the shared on-device profile meets the anonymous user and the
+// project of the take before (the profile remembers both), and the film would open on a project
+// that already holds records. The new project is the first card of the list (newest first).
+const FRESH = args.includes("--fresh-project");
 const WANTED = (opt("shots", "all") === "all" ? null : opt("shots", "").split(","));
 const WIDTH = parseInt(opt("width", "1280"), 10);
 const HEIGHT = parseInt(opt("height", "800"), 10);
@@ -313,7 +324,7 @@ async function ensureHostedProject(page) {
     await sleep(500);
   }
   console.log(`[capture]   hosted sign-in settled: ${JSON.stringify(s)}`);
-  if (s.cards) return s;
+  if (s.cards && !FRESH) return s;
   const answers = [PROJECT_NAME, PROJECT_TYPE];
   const asked = [];
   const onDialog = async (d) => {
@@ -326,8 +337,20 @@ async function ensureHostedProject(page) {
   };
   page.on("dialog", onDialog);
   try {
+    const before = (await state()).cards;
     await page.click("#new-project");
-    await page.waitForFunction(() => document.querySelectorAll("#project-list .card").length > 0, { timeout: 30_000 });
+    // --fresh-project on a profile that already owns projects: wait for the list to show the
+    // new one — one card more, and the first card (newest first) empty. Waiting for "any card"
+    // would pass at once on the old ones, before the list had refreshed.
+    await page.waitForFunction(
+      (fresh) => {
+        const cards = document.querySelectorAll("#project-list .card");
+        if (!fresh) return cards.length > 0;
+        return cards.length > 0 && /\b0 records?\b/.test(cards[0]?.textContent ?? "") && !(fresh.before && cards.length <= fresh.before);
+      },
+      { timeout: 30_000 },
+      FRESH ? { before } : false,
+    );
   } finally {
     page.off("dialog", onDialog);
   }
@@ -357,11 +380,12 @@ async function shotIntro(page, rec, ctx) {
   await rec.start();
   rec.mark("home");
   await sleep(3200); // "This is SiteScribe — an offline-first field inspection companion …"
+  const projectCard = await text(page, "#project-list .card"); // which project is about to be opened
   rec.mark("enter-project");
   await page.click("#project-list .card");
   await waitFor(page, "#note");
   await sleep(4200); // "An engineer opens today's structure and starts walking …"
-  await rec.stop({ shot: "intro", narration: "act-1-the-problem-2.mp3, beat-1-enter-a-project-1.mp3", evidence: await evidence(page) });
+  await rec.stop({ shot: "intro", narration: "act-1-the-problem-2.mp3, beat-1-enter-a-project-1.mp3", evidence: await evidence(page, { projectOpened: projectCard }) });
   ctx.inSession = true;
 }
 
