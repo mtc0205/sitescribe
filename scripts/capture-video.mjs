@@ -190,7 +190,12 @@ class Recorder {
  * was refused — the server's own sentence, as the UI quotes it.
  */
 const GOOGLE_API = /(^|\.)googleapis\.com$/i;
-function requestKind(host, pathname) {
+function requestKind(method, host, pathname) {
+  // A CORS preflight is the browser asking the server for leave to send the request; it is
+  // not the request, and the free tier does not count it. (The first on-device take,
+  // 2026-11-28 02:43, counted the preflight's HTTP 200 as an answered Gemini request while
+  // the request itself had got no answer at all.)
+  if (method === "OPTIONS") return "preflight";
   if (host === "firebasevertexai.googleapis.com") return /:generateContent$/.test(pathname) ? "generateContent" : "ai-logic";
   return (
     {
@@ -213,13 +218,16 @@ function attachLedger(cdp) {
       return;
     }
     if (!GOOGLE_API.test(u.hostname)) return;
-    const row = { at: new Date().toISOString(), shot: ledger.shot, method: e.request.method, kind: requestKind(u.hostname, u.pathname), url: `${u.hostname}${u.pathname}`, status: null, refused: null, noAnswer: null };
+    const row = { at: new Date().toISOString(), shot: ledger.shot, method: e.request.method, kind: requestKind(e.request.method, u.hostname, u.pathname), url: `${u.hostname}${u.pathname}`, status: null, answeredAt: null, refused: null, noAnswer: null };
     ledger.rows.push(row);
     byId.set(e.requestId, row);
   });
   cdp.on("Network.responseReceived", (e) => {
     const r = byId.get(e.requestId);
-    if (r) r.status = e.response.status;
+    if (r) {
+      r.status = e.response.status;
+      r.answeredAt = new Date().toISOString();
+    }
   });
   cdp.on("Network.loadingFailed", (e) => {
     const r = byId.get(e.requestId);
@@ -249,6 +257,7 @@ function geminiRequests(rows) {
   const all = rows.filter((r) => r.kind === "generateContent");
   return { all, answered: all.filter((r) => r.status != null), unanswered: all.filter((r) => r.status == null) };
 }
+const secondsBetween = (a, b) => (a && b ? `${((Date.parse(b) - Date.parse(a)) / 1000).toFixed(1)} s` : "");
 
 /* ---------- storyboard shots ---------- */
 
@@ -628,8 +637,8 @@ console.log(`[capture] ${done.length} shot(s) recorded${failed.length ? `, FAILE
 // The request ledger, said out loud: a Gemini request that Google's server answered is
 // spent, whatever it answered. A 429 means the day's free requests are gone.
 const gemini = geminiRequests(ledger.rows);
-console.log(`[capture] request ledger: ${ledger.rows.length} request(s) to Google's APIs · generateContent ${gemini.all.length} — ${gemini.answered.length} answered by the server (spent), ${gemini.unanswered.length} with no answer (not counted)`);
-for (const r of gemini.all) console.log(`[capture]   ${r.at}  ${r.shot}: ${r.status == null ? `no answer (${r.noAnswer ?? "still pending"})` : `HTTP ${r.status}`}${r.refused ? ` — ${r.refused.slice(0, 140)}` : ""}`);
+console.log(`[capture] request ledger: ${ledger.rows.length} request(s) to Google's APIs (CORS preflights included, not counted) · generateContent ${gemini.all.length} — ${gemini.answered.length} answered by the server (spent), ${gemini.unanswered.length} with no answer (not counted)`);
+for (const r of gemini.all) console.log(`[capture]   ${r.at}  ${r.shot}: ${r.status == null ? `no answer (${r.noAnswer ?? "still open when the browser closed"})` : `HTTP ${r.status} after ${secondsBetween(r.at, r.answeredAt)}`}${r.refused ? ` — ${r.refused.slice(0, 140)}` : ""}`);
 if (gemini.answered.some((r) => r.status === 429)) console.log("[capture] HTTP 429 — today's free-tier requests are spent: no more cloud runs until the window refills");
 
 if (ASSEMBLE) {
