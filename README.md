@@ -127,15 +127,23 @@ firebase emulators:start                   # then open http://127.0.0.1:5000
 The film is cut from a real screen recording, timed by its own narration. `submission/VIDEO-SCRIPT-EN.md` (next to the repo) is the single source of truth: its narration lines become the voice-over files (`scripts/make-vo.mjs`) **and** the subtitle text, and its shot ↔ narration map tells the assembler which shot carries which line.
 
 ```bash
-# 1. record the app (hosted URL for the real film) — frames + timestamps + marks + on-screen badges
-node scripts/capture-video.mjs --url https://<project>.web.app --out ../tools/video --dpr 1.5
-# 2. cut: every shot is padded/trimmed to its narration, subtitles burned, 1080p30 H.264 + AAC
-node scripts/assemble-video.mjs --session ../tools/video --github-url https://github.com/<you>/sitescribe --still cold-open=<photo>
+# 1. record the app on the hosted URL — frames + timestamps + marks + the badges that were on screen
+#    + every request the page sent to Google's APIs with its HTTP outcome (the free tier counts them)
+node scripts/capture-video.mjs --url https://<project>.web.app --out ../tools/video --dpr 2
+# 1b. the same without Gemini Nano: a throw-away profile and the on-device stack off
+node scripts/capture-video.mjs --url https://<project>.web.app --plain-chrome --out ../tools/video-plain --dpr 2
+# 2. cut: every shot is padded/trimmed to its narration, subtitles burned, 1080p30 H.264 + AAC, then verified
+node scripts/assemble-video.mjs --session ../tools/video --final \
+  --github-url https://github.com/<you>/sitescribe \
+  --still cold-open=<photo> --credit "<the photo's attribution>" \
+  --still repo=<repo page> --still repo-readme=<its README>
+# 2b. a named cut of the narration (--cut <name>, from the script's "cuts" map) when a cloud answer could not be filmed
+node scripts/assemble-video.mjs --session ../tools/video --cut plan-b --final …
 ```
 
-`--dpr 1.5` records 1920×1200 frames, which keeps the UI readable **and** crisp after the 1080p downscale (the default `--dpr 1` gives 1280×800 frames that are upscaled). `assemble-video.mjs` resamples the variable-rate screencast to a constant 30 fps **by timestamp**, anchors the on-screen action to the narration through the harness's marks (typing fills the dictated line, the result lands as its explanation starts, thinking time is cut), mixes the voice-over sample-accurately, and then **verifies the render numerically** — duration, frame count, codecs, and for every narration line its position (lag), its identity (correlation with the source clip) and the silence around it. It exits non-zero if anything is off.
+`--dpr 2` records 2560×1600 frames, which keeps the UI readable **and** crisp after the 1080p downscale (the default `--dpr 1` gives 1280×800 frames that are upscaled). `assemble-video.mjs` resamples the variable-rate screencast to a constant 30 fps **by timestamp**, anchors the on-screen action to the narration through the harness's marks (typing fills the dictated line, the result lands as its explanation starts, thinking time is cut), mixes the voice-over sample-accurately, and then **verifies the render numerically** — duration, frame count, codecs, and for every narration line its position (lag), its identity (correlation with the source clip) and the silence around it. It exits non-zero if anything is off.
 
-Honesty guards: every render is stamped `TEST RENDER — not the final video`. `--final` is refused unless every capture was recorded from a hosted https URL, no shot is missing, the cold open is a real photo and no simulated badge was on camera. A missing shot is an error, never black frames.
+Honesty guards: every render is stamped `TEST RENDER — not the final video`. `--final` is refused unless every capture was recorded from a hosted https URL, no shot is missing, the cold open is a real photo, no simulated badge was on camera, every still on screen carries its attribution, and no narration line contradicts the footage — the script marks which lines are true only with an on-device badge on camera, which only without one, and which only with a cloud badge; the harness quotes the badges from the DOM into each shot's `manifest.json`, and the assembler compares the two. A missing shot is an error, never black frames. The capture's `session.json` lists every request to Google's APIs of the run (host and path, HTTP status, and for a refused `generateContent` the server's sentence — never a query string or a header); the run ends with the count of Gemini requests Google's server answered, and says so out loud on HTTP 429.
 
 ## Ship it: one-command bootstrap (needs your Google login once)
 
