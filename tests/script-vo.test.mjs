@@ -70,7 +70,7 @@ test("checkShotMap: catches unknown, duplicated and uncovered narration", () => 
   assert.match(problems.join("\n"), /"beat-1-enter-a-project-1" is not covered/);
 });
 
-test("the real script parses to the 12 known VO ids, the 4 plan-B lines and the FB line, and a consistent shot map", (t) => {
+test("the real script parses to the 12 known VO ids, the 5 plan-B lines and the FB line, and a consistent shot map", (t) => {
   const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "submission", "VIDEO-SCRIPT-EN.md");
   if (!fs.existsSync(file)) return t.skip("submission/VIDEO-SCRIPT-EN.md is not next to the repo");
   const md = fs.readFileSync(file, "utf8");
@@ -82,17 +82,27 @@ test("the real script parses to the 12 known VO ids, the 4 plan-B lines and the 
       "beat-2-offline-capture-on-device-engine-1", "beat-2-offline-capture-on-device-engine-2", "beat-3-a-second-capture-pending-sync-1",
       "beat-4-severity-cross-check-on-device-1", "beat-5-back-in-range-1", "beat-6-report-drafting-cloud-engine-1",
       "act-3-how-it-s-built-1", "act-4-close-1",
-      // ⚠PLAN-B lines in reading order (2026-11-27), then the older ⚠FB line
-      "planb-beat-2", "planb-beat-4", "planb-beat-6", "planb-act-3", "act2-beat2-FB",
+      // ⚠PLAN-B lines in reading order (2026-11-27; planb-beat-3 joined them on 2026-11-28,
+      // when the main line of beat 3 became true only over an on-device badge), then the older ⚠FB line
+      "planb-beat-2", "planb-beat-3", "planb-beat-4", "planb-beat-6", "planb-act-3", "act2-beat2-FB",
     ],
   );
   const map = parseShotMap(md);
   assert.deepEqual(map.shots.map((s) => s.shot), ["cold-open", "intro", "offline-capture", "severity-check", "sync", "report", "engine-panel"]);
   assert.deepEqual(checkShotMap(map, segs), []);
-  // every plan-B line is the target of a cut, and the two cuts differ exactly in beats 2 and 4
+  // every plan-B line is the target of a cut, and the two cuts differ exactly in beats 2, 3 and 4
   const swappedIn = Object.values(map.cuts).flatMap((c) => Object.values(c));
   for (const s of segs.filter((x) => x.id.startsWith("planb-"))) assert.ok(swappedIn.includes(s.id), `${s.id} belongs to no cut`);
   assert.deepEqual(Object.keys(map.cuts["plan-b-nano"]).filter((id) => !(id in map.cuts["plan-b"])), []);
+  assert.deepEqual(
+    Object.keys(map.cuts["plan-b"]).filter((id) => !(id in map.cuts["plan-b-nano"])).sort(),
+    ["beat-2-offline-capture-on-device-engine-2", "beat-3-a-second-capture-pending-sync-1", "beat-4-severity-cross-check-on-device-1"],
+  );
+  // the lines that are true only with an on-device badge on camera carry that mark
+  assert.deepEqual(
+    Object.entries(map.onDeviceBadge).filter(([, mark]) => mark === "required").map(([id]) => id).sort(),
+    ["beat-2-offline-capture-on-device-engine-2", "beat-3-a-second-capture-pending-sync-1", "beat-4-severity-cross-check-on-device-1"],
+  );
   // every rendered VO file on disk is a known segment, and every main-cut segment has a file
   const voDir = path.resolve(file, "..", "vo");
   if (fs.existsSync(voDir)) {
