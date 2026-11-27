@@ -371,6 +371,16 @@ async function slowScroll(page, toY, ms) {
   }
 }
 
+/** The network down, as under a deck: the browser offline and the page told so, then a moment
+ *  for the top bar's connectivity chip to say it. */
+async function cutNetwork(page, ctx) {
+  await ctx.cdp.send("Network.enable");
+  await ctx.cdp.send("Network.emulateNetworkConditions", { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
+  await page.evaluate(() => dispatchEvent(new Event("offline")));
+  await page.waitForFunction(() => /offline/i.test(document.querySelector("#conn-chip")?.textContent ?? ""), { timeout: 10_000 }).catch(() => {});
+  await sleep(600);
+}
+
 async function shotIntro(page, rec, ctx) {
   // ?engine=off is a demo-mode switch (it has no effect in live mode): a hosted run opens the plain URL.
   await page.goto(HOSTED ? URL_BASE + "/" : URL_BASE + "/?engine=off", { waitUntil: "load", timeout: HOSTED ? 60_000 : 30_000 });
@@ -381,6 +391,11 @@ async function shotIntro(page, rec, ctx) {
   rec.mark("home");
   await sleep(3200); // "This is SiteScribe — an offline-first field inspection companion …"
   const projectCard = await text(page, "#project-list .card"); // which project is about to be opened
+  // The line that follows ends "No signal — that's the point": the network goes down before the
+  // project is opened, so the top bar reads "✕ offline" while those words are spoken. (Until
+  // 2026-11-28 it was cut only at the start of the next shot, and every take — the on-device
+  // take of that night included — showed "⇅ online" under them.)
+  await cutNetwork(page, ctx);
   rec.mark("enter-project");
   await page.click("#project-list .card");
   await waitFor(page, "#note");
@@ -390,11 +405,7 @@ async function shotIntro(page, rec, ctx) {
 }
 
 async function shotOfflineCapture(page, rec, ctx) {
-  const cdp = ctx.cdp;
-  await cdp.send("Network.enable");
-  await cdp.send("Network.emulateNetworkConditions", { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
-  await page.evaluate(() => dispatchEvent(new Event("offline")));
-  await sleep(800);
+  await cutNetwork(page, ctx); // already down since the intro — said again, so the shot stands alone
   const before = await count(page, "#record-list .record");
   const firstBadge = () => text(page, "#capture-result .ai-head .chip");
   await rec.start();
