@@ -461,6 +461,21 @@ async function shotReport(page, rec, ctx) {
     hit = await hitAtCentre();
   }
   console.log(`[capture]   report button: ${hit.say}${hit.clickable ? "" : " — NOT clickable"}`);
+  // What the app answered is the point of this shot: its block goes right below the sticky
+  // top bar — badge, title and first lines in view — the moment it has settled, and before
+  // the pause. (Until 2026-11-27 the view stayed where it was for 8 s and the answer sat below
+  // the frame. The first hosted take of 2026-11-27 paused one second first and then centred the
+  // block: in the film of the night before, the lines of the red block that name the error
+  // stayed under the caption for five seconds, and a long report would have shown its middle
+  // instead of its badge.)
+  const placeAnswer = () =>
+    page.evaluate(() => {
+      const out = document.querySelector("#report-out");
+      if (!out) return;
+      out.scrollIntoView({ block: "start" });
+      const bar = document.querySelector(".topbar")?.getBoundingClientRect().height ?? 0;
+      window.scrollBy(0, -(bar + 16));
+    });
   await rec.start();
   await sleep(1200);
   rec.mark("report-click");
@@ -476,11 +491,8 @@ async function shotReport(page, rec, ctx) {
   rec.mark("report-result");
   const badge = await text(page, "#report-out .ai-head .chip");
   console.log(`[capture]   report badge: ${badge}${badge ? "" : ` · error block: ${(await text(page, "#report-out .ai-block.error"))?.slice(0, 160) ?? "none"}`}`);
+  await placeAnswer();
   await sleep(1000);
-  // What the app answered is the point of this shot: bring it into the middle of the frame at
-  // once. (Until 2026-11-27 the view stayed where it was for 8 s, and the answer sat below the
-  // frame while the narration talked about it.)
-  await page.evaluate(() => document.querySelector("#report-out")?.scrollIntoView({ block: "center", behavior: "smooth" }));
   await sleep(8000); // "Now the heavy lifting — drafting today's inspection report …"
   const ev = await evidence(page, { reportBadge: badge });
   await sleep(6000);
